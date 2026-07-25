@@ -220,6 +220,46 @@ else:
         return f"❌ Save dialog error: {e}"
 
 
+def append_to_path(existing: str, new: str) -> str:
+    """Append new paths to existing pipe-separated list, deduplicating by absolute path."""
+    existing = (existing or "").strip()
+    new = (new or "").strip()
+    existing_paths = []
+    if existing:
+        existing_paths = [p.strip().strip('"').strip("'") for p in existing.split('|') if p.strip()]
+    new_paths = []
+    if new:
+        new_paths = [p.strip().strip('"').strip("'") for p in new.split('|') if p.strip()]
+    seen = set()
+    for p in existing_paths:
+        try: seen.add(os.path.abspath(p))
+        except: seen.add(p)
+    duplicates = []
+    for p in new_paths:
+        try: norm = os.path.abspath(p)
+        except: norm = p
+        if norm not in seen:
+            existing_paths.append(p)
+            seen.add(norm)
+        else:
+            duplicates.append(os.path.basename(p))
+    if duplicates:
+        gr.Info(f"Already in queue: {', '.join(duplicates[:3])}{'...' if len(duplicates) > 3 else ''}")
+    return " | ".join(existing_paths) if existing_paths else ""
+
+def append_files_to_queue(current_path: str) -> str:
+    new_paths = open_files_batch_dialog()
+    return append_to_path(current_path, new_paths) if new_paths else (current_path or "")
+
+def append_folder_to_queue(current_path: str) -> str:
+    new_paths = open_dir_batch_dialog()
+    return append_to_path(current_path, new_paths) if new_paths else (current_path or "")
+
+def append_clipboard_to_queue(current_path: str) -> str:
+    new_paths = read_clipboard_paths()
+    return append_to_path(current_path, new_paths) if new_paths else (current_path or "")
+
+
 def build_app():
     saved_keys = load_keys_safe()
     
@@ -540,10 +580,10 @@ def build_app():
             outputs=[api_model]
         )
         
-        paste_btn.click(fn=read_clipboard_paths, outputs=manual_path)
+        paste_btn.click(fn=append_clipboard_to_queue, inputs=[manual_path], outputs=manual_path)
         srt_paste_btn.click(fn=read_clipboard_paths, outputs=srt_local_path)
-        file_btn.click(fn=open_files_batch_dialog, outputs=manual_path)
-        folder_batch_btn.click(fn=open_dir_batch_dialog, outputs=manual_path)
+        file_btn.click(fn=append_files_to_queue, inputs=[manual_path], outputs=manual_path)
+        folder_batch_btn.click(fn=append_folder_to_queue, inputs=[manual_path], outputs=manual_path)
         folder_btn.click(fn=open_folder_dialog, outputs=output_folder)
         srt_file_btn.click(fn=open_srt_batch_dialog, outputs=srt_local_path)
         srt_folder_btn.click(fn=open_dir_srt_dialog, outputs=srt_local_path)
