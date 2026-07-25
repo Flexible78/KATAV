@@ -1,0 +1,4 @@
+[project]
+# Point Pyrefly to the virtual environment's Python interpreter
+# so it can resolve installed packages like gradio, etc.
+python_interpreter = ".venv/Scripts/python.exe"

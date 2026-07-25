@@ -1,0 +1,70 @@
+# Environment / secrets
+.env
+.env.*
+whisper_api_keys.json
+whisper_settings.json
+
+# Output and temp directories
+Outputs/
+outputs/
+bkp/
+.venv/
+venv/
+__pycache__/
+_public/
+models/
+cache/
+hf_cache/
+
+# Python bytecode
+*.py[cod]
+
+# Logs and temp files
+*.log
+*.tmp
+*.bak
+
+# Repomix / generated reports
+repomix*.xml
+
+# Media files
+*.mp3
+*.wav
+*.m4a
+*.mp4
+*.mkv
+*.avi
+
+# Subtitle files
+*.srt
+*.vtt
+*.ass
+
+# Archives
+*.zip
+*.7z
+*.rar
+
+# IDE / editor
+.vscode/
+.idea/
+Thumbs.db
+
+# Windows reserved filename (cannot be indexed by git)
+nul
+
+# Local data files containing personal paths (not part of the application)
+help.txt
+error.txt
+test.txt
+fileList.txt
+combineFile.txt
+listgemini.txt
+models_gemini_list.txt
+
+# Legacy monolith scripts (superseded by modular code; kept locally only)
+run_whisper.py
+libs/run_whisper.py
+
+# Local git bundle backups (do not push)
+*.bundle

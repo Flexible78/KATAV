@@ -1,0 +1,6 @@
+{
+    "whisper_exe": "",
+    "trans_provider": "OpenRouter",
+    "trans_model": "",
+    "note": "Copy this file to whisper_settings.json. Transcription works without API keys."
+}

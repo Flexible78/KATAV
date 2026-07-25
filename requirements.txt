@@ -1,0 +1,18 @@
+# KATAV — Python dependencies for the main app (python main.py)
+#
+# Transcription (speech-to-text) works with only the core dependencies below.
+# Translation providers and extra features use the optional dependencies.
+
+# --- Core ---
+gradio>=4.0
+requests>=2.31
+
+# --- Optional: AI translation providers ---
+google-generativeai>=0.7.0   # Google Gemini / Google Studio
+openai>=1.0                   # OpenRouter, Google Studio, OmniRoute, Freeway, Mistral (OpenAI-compatible)
+groq>=0.11                    # Groq
+
+# --- Optional: extra features ---
+yt-dlp>=2024.4.9              # Download audio from URLs (YouTube, VK, TikTok)
+ffmpeg-python>=0.2            # Save audio track as MP3
+PyPDF2>=3.0                   # Read PDF files for translation
