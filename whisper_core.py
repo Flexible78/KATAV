@@ -181,10 +181,9 @@ def run_transcription(
             if use_print_progress: command.append("--print_progress")
             if use_vad_filter: command.extend(["--vad_filter", "True"])
             if use_beep_off: command.append("--beep_off")
-            command.extend(["--output_dir", current_out_dir, "--", video_path])
-
-            # --threads flag confirmed via --help
+            # --threads flag confirmed via --help (MUST be before -- separator!)
             command.extend(["--threads", str(WHISPER_MAX_THREADS)])
+            command.extend(["--output_dir", current_out_dir, "--", video_path])
 
             current_process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace', bufsize=1, universal_newlines=True, creationflags=creationflags, env=env)
             threading.Thread(target=enqueue_output, args=(current_process.stdout, log_queue), daemon=True).start()
