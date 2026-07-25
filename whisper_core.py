@@ -149,6 +149,11 @@ def run_transcription(
     # Optional GPU power limit (best-effort, fully reversible)
     _prev_gpu_power = _gpu_power_limit_set(WHISPER_GPU_POWER_LIMIT_W)
 
+    # Emit queue state for batch panel
+    total_files = len(files_to_process)
+    for i, fp in enumerate(files_to_process):
+        log_queue.put(f"[PROGRESS_FILE] | {i+1} | {total_files} | {os.path.basename(fp)} | queued\n")
+
     try:
         if not WHISPER_EXE or not Path(WHISPER_EXE).is_file():
             raise RuntimeError(WHISPER_EXE_HINT)
@@ -157,6 +162,7 @@ def run_transcription(
             full_whisper_log = "" 
             base_name = os.path.splitext(os.path.basename(video_path))[0]
             log_queue.put(f"\n🚜 [BATCH {idx+1}/{len(files_to_process)}] Processing: {base_name}\n")
+            log_queue.put(f"[PROGRESS_FILE] | {idx+1} | {total_files} | {base_name} | running\n")
             
             if use_custom_output and output_dir.strip(): current_out_dir = output_dir.strip()
             elif "Temp" in video_path or "temp" in video_path: current_out_dir = DEFAULT_OUTPUT_DIR
@@ -246,6 +252,8 @@ def run_transcription(
                     clean_text_result = re.sub(r'\[\d{2}:\d{2}(:\d{2})?\.\d{3}.*?\d{2}:\d{2}(:\d{2})?\.\d{3}\]\s*', '', clean_text_result)
                     all_clean_text += f"\n--- {base_name} ---\n" + "\n".join([line for line in clean_text_result.split('\n') if line.strip()]) + "\n"
                 except: pass
+            
+            log_queue.put(f"[PROGRESS_FILE] | {idx+1} | {total_files} | {base_name} | done\n")
             
         final_status = gr.update(elem_classes=["status-error"]) if stop_requested else gr.update(elem_classes=["status-done"])
         if not stop_requested: log_queue.put(f"\n✅ BATCH DONE! Files processed: {len(processed_srt_paths)}\n")

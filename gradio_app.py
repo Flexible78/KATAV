@@ -55,6 +55,14 @@ time_remaining = "00:00"
 audio_speed = "0.00x"
 full_whisper_log = ""
 
+# Batch queue state for progress panel
+batch_items = []  # list of {name, status, idx, total}
+batch_total = 0
+batch_completed = 0
+batch_failed = 0
+batch_current_name = ""
+batch_current_idx = 0
+
 def get_model_choices(models_config):
     if isinstance(models_config, dict): return [v[0] for k, v in models_config.items()]
     elif isinstance(models_config, list):
@@ -63,7 +71,10 @@ def get_model_choices(models_config):
     return []
 
 def prepare_start():
+    global batch_items, batch_total, batch_completed, batch_failed, batch_current_name, batch_current_idx
     utils.stop_requested = False
+    batch_items = []; batch_total = 0; batch_completed = 0; batch_failed = 0
+    batch_current_name = ""; batch_current_idx = 0
     return gr.update(elem_classes=["status-running"])
 
 def eco_preset():
@@ -82,6 +93,7 @@ def eco_preset():
 def process_logs(current_log: str):
     global current_percent, time_elapsed, time_remaining, audio_speed, full_whisper_log, current_action
     global current_file_percent, current_file_action
+    global batch_items, batch_total, batch_completed, batch_failed, batch_current_name, batch_current_idx
     
     new_text = current_log or ""
     lines_added = False
@@ -112,12 +124,29 @@ def process_logs(current_log: str):
                 audio_speed = "API"
                 continue
 
-            match_f = re.search(r'\[PROGRESS_FILE\] \| (\d+) \| (\d+)', line)
+            match_f = re.search(r'\[PROGRESS_FILE\] \| (\d+) \| (\d+) \| (.+?) \| (\w+)(?: \| (.+))?', line)
             if match_f:
-                f_done = int(match_f.group(1))
+                f_idx = int(match_f.group(1))
                 f_total = int(match_f.group(2))
-                current_file_action = f"FILE ({f_done}/{f_total})"
-                current_file_percent = int((f_done / f_total) * 100) if f_total > 0 else 100
+                f_name = match_f.group(3).strip()
+                f_status = match_f.group(4).strip()
+                f_error = match_f.group(5).strip() if match_f.group(5) else ""
+                
+                batch_total = f_total
+                found = False
+                for item in batch_items:
+                    if item['idx'] == f_idx:
+                        item['status'] = f_status; item['name'] = f_name; item['error'] = f_error
+                        found = True; break
+                if not found:
+                    batch_items.append({'idx': f_idx, 'name': f_name, 'status': f_status, 'total': f_total, 'error': f_error})
+                if f_status == 'running':
+                    batch_current_name = f_name; batch_current_idx = f_idx
+                    current_file_action = f"FILE ({f_idx}/{f_total})"
+                elif f_status in ('done', 'failed'):
+                    batch_completed = sum(1 for i in batch_items if i['status'] == 'done')
+                    batch_failed = sum(1 for i in batch_items if i['status'] == 'failed')
+                current_file_percent = int((f_idx / f_total) * 100) if f_total > 0 else 100
                 continue
 
             new_text += line
@@ -142,6 +171,39 @@ def process_logs(current_log: str):
         </div>
         """
 
+    # Build batch status panel HTML
+    batch_panel_html = ""
+    if batch_items:
+        sorted_items = sorted(batch_items, key=lambda x: x['idx'])
+        running = [i for i in sorted_items if i['status'] == 'running']
+        done = [i for i in sorted_items if i['status'] == 'done']
+        failed = [i for i in sorted_items if i['status'] == 'failed']
+        queued = [i for i in sorted_items if i['status'] == 'queued']
+        
+        parts = []
+        if running:
+            r = running[0]
+            overall_pct = int(((batch_completed + batch_failed) / max(batch_total, 1)) * 100)
+            parts.append(f"""<div style="margin-top:10px;padding:10px 12px;background:rgba(234,88,12,0.06);border:1px solid rgba(234,88,12,0.2);border-radius:8px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;">
+            <span style="font-weight:700;font-size:13px;color:#f4f4f5;">{r['name']}</span>
+            <span style="font-size:10px;color:#ea580c;font-weight:700;text-transform:uppercase;">RUNNING</span></div>
+            <div style="width:100%;background:#18181b;border-radius:3px;height:5px;border:1px solid #27272a;"><div style="width:{current_percent}%;height:100%;background:linear-gradient(90deg,#ea580c,#f97316);border-radius:3px;transition:width 0.3s;"></div></div>
+            <div style="display:flex;justify-content:space-between;margin-top:5px;font-size:10px;color:#71717a;">
+            <span>Batch: {batch_completed + batch_failed}/{batch_total} ({overall_pct}%)</span><span>File: {current_percent}%</span></div></div>""")
+        if done:
+            dn = " · ".join([i['name'] for i in done[:6]])
+            if len(done) > 6: dn += f" +{len(done)-6}"
+            parts.append(f'<div style="margin-top:5px;font-size:11px;color:#10b981;">✅ Done ({len(done)}): <span style="color:#a1a1aa;">{dn}</span></div>')
+        if failed:
+            fn = " · ".join([i['name'] for i in failed])
+            parts.append(f'<div style="margin-top:4px;font-size:11px;color:#e11d48;">❌ Failed ({len(failed)}): <span style="color:#f87171;">{fn}</span></div>')
+        if queued:
+            qn = " · ".join([i['name'] for i in queued[:5]])
+            if len(queued) > 5: qn += f" +{len(queued)-5}"
+            parts.append(f'<div style="margin-top:4px;font-size:11px;color:#52525b;">⏳ Queued ({len(queued)}): <span style="color:#71717a;">{qn}</span></div>')
+        batch_panel_html = '<div style="margin-top:10px;padding-top:10px;border-top:1px solid #3f3f46;">' + ''.join(parts) + '</div>'
+
     metrics_html = f"""
     <div style="background: rgba(30, 30, 32, 0.9); padding: 15px; border-radius: 12px; border: 1px solid #52525b; margin-bottom: 10px; box-shadow: inset 0 2px 10px rgba(0,0,0,0.5);">
         <div style="display: flex; justify-content: space-between; margin-bottom: 8px; font-weight: bold; font-size: 16px; color: #f4f4f5; text-transform: uppercase; letter-spacing: 0.5px;">
@@ -155,7 +217,7 @@ def process_logs(current_log: str):
             <span>⏳ Left: <span style="color:#f87171;">{time_remaining}</span></span>
             <span>⚡ Speed: <span style="color:#34d399;">{audio_speed}</span></span>
         </div>
-        {file_progress_html}
+        {file_progress_html}{batch_panel_html}
     </div>
     """
     return new_text, metrics_html
