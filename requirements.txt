@@ -15,5 +15,8 @@ groq>=0.11                    # Groq
 # --- Optional: extra features ---
 yt-dlp>=2024.4.9              # Download audio from URLs (YouTube, VK, TikTok)
 gdown==5.2.0                  # Download publicly shared Google Drive files
+google-auth-oauthlib>=1.0     # Google Drive OAuth installed-app flow
+google-auth-httplib2>=0.2    # Google Drive OAuth transport
+google-api-python-client>=2.0  # Google Drive API v3 downloads
 ffmpeg-python>=0.2            # Save audio track as MP3
 PyPDF2>=3.0                   # Read PDF files for translation

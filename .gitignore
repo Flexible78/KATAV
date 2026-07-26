@@ -3,6 +3,9 @@
 .env.*
 whisper_api_keys.json
 whisper_settings.json
+google_client_secret.json
+google_drive_token.json
+!google_client_secret.example.json
 
 # Output and temp directories
 Outputs/

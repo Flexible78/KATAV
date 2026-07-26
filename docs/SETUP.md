@@ -133,7 +133,49 @@ If you have no budget, these options give you working translation without paymen
 
 ---
 
-## Section 5 — Troubleshooting
+## Section 5 — Google Drive OAuth (optional)
+
+Public Google Drive links are downloaded without authentication. Private files require OAuth sign-in.
+
+### 1. Create OAuth credentials
+
+1. Go to the [Google Cloud Console](https://console.cloud.google.com/).
+2. Create a new project (or select an existing one).
+3. Enable the **Google Drive API**.
+4. Open **APIs & Services → Credentials** and click **Create credentials → OAuth client ID**.
+5. If prompted, configure the consent screen:
+   - User type: **External**
+   - App name: anything you like
+   - User support email: your email
+   - Developer contact email: your email
+6. Application type: **Desktop app**.
+7. Name: `KATAV Desktop`.
+8. Download the JSON client secret.
+
+### 2. Place the secret file
+
+Copy the downloaded JSON into the KATAV root directory and rename it to:
+
+```
+google_client_secret.json
+```
+
+Make sure the file is next to `main.py`.
+
+### 3. Sign in
+
+1. Start KATAV.
+2. In the **SOURCES** accordion, click **SIGN IN TO GOOGLE**.
+3. A browser window opens asking you to grant KATAV read-only access to your Google Drive files.
+4. After approval, the status shows `Google Drive: signed in as <email>`.
+
+The signed-in token is saved in `google_drive_token.json`. Both `google_client_secret.json` and `google_drive_token.json` are gitignored and should never be committed.
+
+If the client secret file is missing, the UI shows a link to this guide instead of a traceback.
+
+---
+
+## Section 6 — Troubleshooting
 
 ### `faster-whisper-xxl.exe was not found`
 

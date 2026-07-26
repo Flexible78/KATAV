@@ -33,6 +33,7 @@ from batch_results import join_batch_results, zip_batch_results
 
 from ai_translator import translate_content, check_api, fetch_models
 from queue_manager import batch_queue, format_duration
+from google_drive import get_drive_status, sign_in_to_google_drive, is_google_drive_url
 import utils 
 
 GROQ_MODELS = [
@@ -42,6 +43,7 @@ GROQ_MODELS = [
     "llama3-70b-8192",
     "mixtral-8x7b-32768"
 ]
+
 
 def load_keys_safe() -> dict:
     if os.path.exists(CONFIG_FILE):
@@ -70,6 +72,13 @@ batch_current_name = ""
 batch_current_idx = 0
 
 
+# ---------------------------------------------------------------------------
+# Theme helpers
+# ---------------------------------------------------------------------------
+_THEME_JS = """function(theme){var newTheme=theme==='dark'?'light':'dark';var body=document.body;if(newTheme==='light'){body.classList.add('katav-light');}else{body.classList.remove('katav-light');}try{localStorage.setItem('katav-theme',newTheme);}catch(e){}return newTheme;}"""
+_RESTORE_THEME_JS = """function(theme){var saved=theme;if(saved==='light'){document.body.classList.add('katav-light');}else{document.body.classList.remove('katav-light');}return saved;}"""
+
+
 def _is_playlist_url(url: str) -> bool:
     return "/playlist?" in url and "list=" in url
 
@@ -90,6 +99,10 @@ def append_url_to_input(current_urls: str, new_url: str):
     if not re.match(r'^https?://', new_url):
         gr.Warning(f"Invalid URL: {new_url[:80]}")
         return current_urls or "", new_url
+    if "open.spotify.com" in new_url:
+        gr.Warning("Spotify URLs are not supported (DRM-protected).")
+        utils.log_queue.put("[SPOTIFY] DRM-protected, cannot be downloaded. For podcasts use the RSS link or the same episode on YouTube.\n")
+        return current_urls or "", ""
     existing = (current_urls or "").strip()
     existing_urls = [u.strip() for u in existing.split('\n') if u.strip()]
     if _url_already_in_list(new_url, existing_urls):
@@ -134,12 +147,14 @@ def append_playlist_to_input(current_urls: str, playlist_url: str):
         return existing + "\n" + playlist_url, ""
     return playlist_url, ""
 
+
 def get_model_choices(models_config):
     if isinstance(models_config, dict): return [v[0] for k, v in models_config.items()]
     elif isinstance(models_config, list):
         if len(models_config) > 0 and isinstance(models_config[0], tuple): return [v[0] for v in models_config]
         return models_config
     return []
+
 
 def prepare_start(
     manual_path_val: str, urls_val: str, input_files_val: List[Any],
@@ -150,7 +165,7 @@ def prepare_start(
     beam_size_val: float, patience_val: float, condition_on_prev_val: bool,
     no_speech_thresh_val: float, use_sentence_val: bool, use_print_progress_val: bool,
     use_beep_off_val: bool, use_custom_output_val: bool, output_dir_val: str,
-    cookie_browser_val: str = "None"
+    plain_text_output_val: bool = False
 ):
     global batch_items, batch_total, batch_completed, batch_failed, batch_current_name, batch_current_idx
     global transcribe_percent, translate_percent, translation_seen, current_phase
@@ -158,9 +173,6 @@ def prepare_start(
     batch_items = []; batch_total = 0; batch_completed = 0; batch_failed = 0
     batch_current_name = ""; batch_current_idx = 0
     transcribe_percent = 0; translate_percent = 0; translation_seen = False; current_phase = "idle"
-
-    # Persist cookie browser choice
-    ui_state.save_settings({"whisper_cookie_browser": cookie_browser_val})
 
     # ── Build queue in QueueManager ──
     utils.log_queue.put("[STAGE] Building queue...\n")
@@ -213,11 +225,13 @@ def prepare_start(
         "use_sentence": use_sentence_val, "use_print_progress": use_print_progress_val,
         "use_beep_off": use_beep_off_val, "use_custom_output": use_custom_output_val,
         "output_dir": output_dir_val,
+        "plain_text_output": plain_text_output_val,
     }
     for qi in batch_queue.get_items():
         batch_queue.set_settings_snapshot(qi.idx, settings_snap)
 
     return gr.update(elem_classes=["status-running"])
+
 
 def eco_preset():
     """turbo model + int8 + beam_size=1 (greedy) drastically reduce GPU/CPU work
@@ -366,8 +380,6 @@ def process_logs(current_log: str):
     batch_completed = batch_queue.get_completed_count()
     batch_failed = batch_queue.get_failed_count()
 
-    # Per-file progress is now merged into the single weighted bar above.
-
     # Build enhanced queue panel (E4: selective removal, E3: File/URL badges)
     batch_panel_html = ""
     bg_items = batch_queue.get_items()
@@ -448,7 +460,8 @@ def process_logs(current_log: str):
         {batch_panel_html}{shutdown_html}
     </div>
     """
-    return new_text, metrics_html
+    batch_done = batch_total > 0 and (batch_completed + batch_failed) >= batch_total
+    return new_text, metrics_html, gr.update(visible=batch_done)
 
 
 # ==============================================================================
@@ -505,7 +518,7 @@ else:
         result = subprocess.run([sys.executable, "-c", code], text=True, capture_output=True, creationflags=CREATE_NO_WINDOW, timeout=120)
         saved_path = result.stdout.strip()
         if saved_path: return f"✅ SRT saved successfully: {saved_path}"
-        return "⚠️ Save cancelled."
+        return "️ Save cancelled."
     except Exception as e:
         return f"❌ Save dialog error: {e}"
 
@@ -553,7 +566,7 @@ def append_clipboard_to_queue(current_path: str) -> str:
 def build_app():
     saved_keys = load_keys_safe()
     
-    with gr.Blocks(title="KATAV - Speech to Text") as app:
+    with gr.Blocks(title="KATAV - Speech to Text", css=custom_css) as app:
         hidden_base_name = gr.State("") 
         hidden_actual_out_dir = gr.State("") 
         hidden_srt_paths = gr.State("")
@@ -562,223 +575,226 @@ def build_app():
         theme_state = gr.State(ui_state.get("katav_theme", "dark"))
         with gr.Row():
             gr.Markdown("<div class='micro-title'>🎙️ KATAV - Speech to Text + AI Translator</div>", scale=5)
-            theme_toggle_btn = gr.Button("🌓 Toggle Theme", variant="secondary", elem_classes=["fixed-height-btn"], scale=1, min_width=40)
-        _THEME_JS = "function(theme){var newTheme=theme==='dark'?'light':'dark';var body=document.body;if(newTheme==='light'){body.classList.add('katav-light');}else{body.classList.remove('katav-light');}try{localStorage.setItem('katav-theme',newTheme);}catch(e){}return newTheme;}"
-        _RESTORE_THEME_JS = "function(theme){var saved=theme;if(saved==='light'){document.body.classList.add('katav-light');}else{document.body.classList.remove('katav-light');}return saved;}"
+            theme_toggle_btn = gr.Button("◐", elem_id="theme_btn", variant="secondary", scale=0, min_width=36)
         theme_toggle_btn.click(fn=lambda t: (ui_state.save_settings({"katav_theme": t}), t)[1], js=_THEME_JS, inputs=[theme_state], outputs=[theme_state], queue=False)
         
         with gr.Row():
             # ==================== ЛЕВАЯ КОЛОНКА ====================
-            with gr.Column(scale=5):
-                gr.Markdown("### 📁 MEDIA FILES")
+            with gr.Column(scale=5, min_width=420):
                 
-                urls_input = gr.Textbox(
-                    label="🌐 URLS (YouTube, VK, TikTok, Google Drive) — one per line",
-                    value=ui_state.get("whisper_urls", ""),
-                    placeholder="https://youtube.com/watch?v=...",
-                    lines=3
-                )
-                with gr.Row(elem_classes=["uniform-row"]):
-                    new_url_input = gr.Textbox(
-                        label="➕ NEW URL TO ADD",
-                        placeholder="Paste a single URL here and click ADD",
-                        scale=5
+                with gr.Accordion("SOURCES", open=True):
+                    urls_input = gr.Textbox(
+                        label="URLS (one per line)",
+                        value=ui_state.get("whisper_urls", ""),
+                        placeholder="https://youtube.com/watch?v=...",
+                        lines=3
                     )
-                    add_url_btn = gr.Button("➕ ADD URL", variant="secondary", elem_classes=["fixed-height-btn"], scale=1, min_width=40)
-                    add_playlist_btn = gr.Button("➕ ADD PLAYLIST", variant="secondary", elem_classes=["fixed-height-btn"], scale=1, min_width=40)
-                    paste_url_btn = gr.Button("📋 PASTE URL", variant="secondary", elem_classes=["fixed-height-btn"], scale=1, min_width=40)
-                with gr.Row(elem_classes=["uniform-row"]):
-                    new_playlist_input = gr.Textbox(
-                        label="➕ NEW PLAYLIST URL TO ADD",
-                        placeholder="Paste a YouTube playlist URL here and click ADD PLAYLIST",
-                        scale=5
+                    with gr.Row(elem_classes=["uniform-row"]):
+                        new_url_input = gr.Textbox(
+                            label="NEW URL",
+                            placeholder="Paste a URL and click a button",
+                            scale=5
+                        )
+                    with gr.Row(elem_classes=["uniform-row"]):
+                        add_url_btn = gr.Button("+ URL", variant="secondary", elem_classes=["fixed-height-btn"], scale=1, min_width=40)
+                        add_playlist_btn = gr.Button("+ PLAYLIST", variant="secondary", elem_classes=["fixed-height-btn"], scale=1, min_width=40)
+                        paste_url_btn = gr.Button("PASTE", variant="secondary", elem_classes=["fixed-height-btn"], scale=1, min_width=40)
+                    
+                    with gr.Row(elem_classes=["uniform-row"]):
+                        manual_path = gr.Textbox(
+                            label="FILE / FOLDER PATH", 
+                            value=ui_state.get("whisper_manual_path", ""), 
+                            scale=5
+                        )
+                    with gr.Row(elem_classes=["uniform-row"]):
+                        clear_media_btn = gr.Button("CLEAR", variant="secondary", elem_classes=["fixed-height-btn"], scale=1, min_width=40)
+                        paste_btn = gr.Button("PASTE", variant="secondary", elem_classes=["fixed-height-btn"], scale=1, min_width=40)
+                        file_btn = gr.Button("FILE", variant="secondary", elem_classes=["fixed-height-btn"], scale=1, min_width=40)
+                        folder_batch_btn = gr.Button("DIR", variant="secondary", elem_classes=["fixed-height-btn"], scale=1, min_width=40)
+                    
+                    input_file = gr.File(
+                        label="Drop files here", 
+                        file_types=["audio", "video"], 
+                        file_count="multiple"
                     )
-                cookie_browser = gr.Dropdown(
-                    choices=["None", "chrome", "edge", "firefox", "yandex"],
-                    value=ui_state.get("whisper_cookie_browser", "None"),
-                    label="🍪 COOKIES FROM BROWSER (for age-restricted videos)"
-                )
+                    
+                    with gr.Row(elem_classes=["uniform-row"]):
+                        drive_status = gr.Textbox(
+                            label="Google Drive",
+                            value=get_drive_status(),
+                            interactive=False,
+                            scale=4,
+                            elem_id="drive_status"
+                        )
+                        signin_google_btn = gr.Button("SIGN IN TO GOOGLE", variant="secondary", elem_classes=["fixed-height-btn"], scale=1, min_width=40)
+                    signin_google_btn.click(fn=sign_in_to_google_drive, outputs=drive_status, queue=False)
                 
-                with gr.Row(elem_classes=["uniform-row"]):
-                    manual_path = gr.Textbox(
-                        label="📂 FILE / FOLDER PATH", 
-                        value=ui_state.get("whisper_manual_path", ""), 
-                        scale=5
-                    )
-                    clear_media_btn = gr.Button("🗑️ CLEAR", variant="secondary", elem_classes=["fixed-height-btn"], scale=1, min_width=40)
-                    paste_btn = gr.Button("📋 PASTE", variant="secondary", elem_classes=["fixed-height-btn"], scale=1, min_width=40)
-                    file_btn = gr.Button("📄 FILE", variant="secondary", elem_classes=["fixed-height-btn"], scale=1, min_width=40)
-                    folder_batch_btn = gr.Button("📂 DIR", variant="secondary", elem_classes=["fixed-height-btn"], scale=1, min_width=40)
-                
-                input_file = gr.File(
-                    label="Drop files here", 
-                    file_types=["audio", "video"], 
-                    file_count="multiple"
-                )
-                
-                with gr.Accordion("📌 OUTPUT DIRECTORY", open=False):
-                    use_custom_output = gr.Checkbox(
-                        label="USE CUSTOM OUTPUT DIR", 
-                        value=ui_state.get("whisper_use_custom_output", False)
-                    )
+                with gr.Accordion("OUTPUT", open=False):
+                    with gr.Row():
+                        use_custom_output = gr.Checkbox(
+                            label="USE CUSTOM OUTPUT DIR", 
+                            value=ui_state.get("whisper_use_custom_output", False),
+                            scale=1,
+                        )
                     with gr.Row(elem_classes=["uniform-row"]):
                         output_folder = gr.Textbox(
                             label="PATH", 
                             value=ui_state.get("whisper_output_dir", DEFAULT_OUTPUT_DIR), 
                             scale=4
                         )
-                        folder_btn = gr.Button("📂 BROWSE", variant="secondary", elem_classes=["fixed-height-btn"], scale=1, min_width=40)
+                        folder_btn = gr.Button("BROWSE", variant="secondary", elem_classes=["fixed-height-btn"], scale=1, min_width=40)
+                    with gr.Row():
+                        output_formats = gr.CheckboxGroup(choices=["srt", "vtt", "txt", "json"], value=["srt"], label="FORMATS")
+                    with gr.Row():
+                        save_audio_track = gr.Checkbox(label="SAVE MP3", value=False, elem_id="save_audio_track")
 
-                gr.Markdown("### ⚙️ WHISPER SETTINGS")
+                with gr.Accordion("WHISPER", open=False):
+                    with gr.Row():
+                        language = gr.Dropdown(choices=["auto", "he", "ru", "en"], value=ui_state.get("whisper_language", "auto"), label="LANGUAGE")
+                        vad_method = gr.Dropdown(choices=["pyannote_v3", "silero_v3", "No VAD"], value=ui_state.get("whisper_vad", "pyannote_v3"), label="VAD")
+                    with gr.Row():
+                        model_size = gr.Dropdown(choices=["large-v2", "large-v3", "large-v3-turbo", "turbo", "medium"], value=ui_state.get("whisper_model", "large-v2"), label="MODEL")
+                        compute_type = gr.Dropdown(choices=["float16", "int8", "float32"], value=ui_state.get("whisper_compute", "float16"), label="COMPUTE")
+                    with gr.Row():
+                        eco_btn = gr.Button("ECO (quiet/cool)", elem_classes=["fixed-height-btn"])
+                    
+                    with gr.Accordion("ADVANCED SETTINGS", open=False):
+                        initial_prompt = gr.Textbox(label="CONTEXT (-prompt)", value=ui_state.get("whisper_prompt", "auto"))
+                        hotwords = gr.Textbox(label="HOTWORDS (--hotwords)", value=ui_state.get("whisper_hotwords", ""))
+                        temperature = gr.Slider(minimum=0.0, maximum=1.0, step=0.1, value=ui_state.get("whisper_temp", 0.0), label="TEMPERATURE")
+                        rep_penalty = gr.Slider(minimum=1.0, maximum=2.0, step=0.1, value=ui_state.get("whisper_rep", 1.0), label="REP PENALTY")
+                        beam_size = gr.Slider(minimum=1, maximum=10, step=1, value=ui_state.get("whisper_beam", 5), label="BEAM SIZE")
+                        patience = gr.Slider(minimum=0.0, maximum=2.0, step=0.1, value=ui_state.get("whisper_patience", 1.0), label="PATIENCE")
+                        condition_on_prev = gr.Checkbox(label="COND ON PREV TEXT", value=ui_state.get("whisper_cond", True))
+                        no_speech_thresh = gr.Slider(minimum=0.0, maximum=1.0, step=0.1, value=ui_state.get("whisper_nospeech", 0.6), label="NO SPEECH THRESH")
+    
+                    with gr.Row(elem_classes=["options-row"]):
+                        use_sentence = gr.Checkbox(label="BY SENTENCES", value=ui_state.get("whisper_sentence", True))
+                        plain_text_output = gr.Checkbox(label="PLAIN TEXT", value=ui_state.get("whisper_plain_text", False))
+                        use_print_progress = gr.Checkbox(label="PROGRESS BAR", value=ui_state.get("whisper_progress", True))
+                        use_vad_filter = gr.Checkbox(label="VAD", value=ui_state.get("whisper_vadfilter", True))
+                        use_beep_off = gr.Checkbox(label="NO BEEPS", value=ui_state.get("whisper_beep", True))
+
+                with gr.Accordion("TRANSLATION", open=False):
+                    with gr.Column(elem_classes=["translate-box"]):
+                        
+                        api_provider_val = ui_state.get("trans_provider", "Local Proxy (127.0.0.1)")
+                        with gr.Row():
+                            api_provider = gr.Radio(choices=["Local Proxy (127.0.0.1)", "OmniRoute", "Freeway", "Mistral", "Google Studio (Gemma 4)", "Groq (OSS 120b)", "OpenRouter"], value=api_provider_val, label="PROVIDER")
+                            translate_mode = gr.Radio(choices=["Files", "Text (from Editor)"], value="Files", label="MODE")
+                            
+                        target_languages = gr.CheckboxGroup(choices=TARGET_LANGUAGES, value=ui_state.get("trans_langs", TARGET_LANGUAGE_DEFAULTS), label="TARGET LANGUAGES")
+                        force_all_langs = gr.Checkbox(label="TRANSLATE ANYWAY", value=False)
+                        
+                        init_key = ""
+                        if api_provider_val == "OpenRouter": init_key = saved_keys.get("openrouter", "")
+                        elif api_provider_val == "Groq (OSS 120b)": init_key = saved_keys.get("groq", "")
+                        elif api_provider_val == "Google Studio (Gemma 4)": init_key = saved_keys.get("google_studio", "") or saved_keys.get("google", "")
+                        elif api_provider_val == "Google Gemini": init_key = saved_keys.get("google", "")
+                        elif api_provider_val == "OmniRoute": init_key = saved_keys.get("omniroute", "")
+                        elif api_provider_val == "Freeway": init_key = saved_keys.get("freeway", "") or "123"
+                        elif api_provider_val == "Mistral": init_key = saved_keys.get("mistral", "")
+                        else: init_key = "dummy" if api_provider_val == "Local Proxy (127.0.0.1)" else ""
+                        
+                        api_key_input = gr.Textbox(label=f"API KEY ({api_provider_val})", value=init_key, type="password")
+                        save_key_btn = gr.Button("SAVE KEY", variant="secondary", elem_classes=["fixed-height-btn"], min_width=40)
+                        
+                        if api_provider_val == "OpenRouter": init_choices = get_model_choices(OPENROUTER_MODELS)
+                        elif api_provider_val == "Groq (OSS 120b)": init_choices = GROQ_MODELS
+                        elif api_provider_val == "Google Studio (Gemma 4)": init_choices = get_model_choices(GOOGLE_STUDIO_MODELS)
+                        elif api_provider_val == "OmniRoute": init_choices = get_model_choices(OMNIROUTE_MODELS)
+                        elif api_provider_val == "Freeway": init_choices = get_model_choices(FREEWAY_MODELS)
+                        elif api_provider_val == "Mistral": init_choices = get_model_choices(MISTRAL_MODELS)
+                        else: init_choices = get_model_choices(LOCAL_PROXY_MODELS)
+                        
+                        with gr.Row(elem_classes=["uniform-row"]):
+                            api_model = gr.Dropdown(choices=init_choices, value=ui_state.get("trans_model", "auto"), label="MODEL", allow_custom_value=True, scale=4)
+                            check_api_btn = gr.Button("CHECK API", variant="secondary", elem_classes=["fixed-height-btn"], scale=1)
+                            refresh_models_btn = gr.Button("🔄", variant="secondary", elem_classes=["fixed-height-btn"], scale=1, min_width=40)
+                            
+                        translate_status = gr.Textbox(label="TRANSLATION STATUS", lines=2, interactive=False)
+                            
+                        with gr.Group():
+                            with gr.Row():
+                                srt_local_path = gr.Textbox(label="AUTOFILL FILE PATH", value=ui_state.get("trans_srt_path", ""), placeholder="D:\\Video\\docs", scale=5, lines=2)
+                                with gr.Column(scale=4, min_width=320):
+                                    with gr.Row(elem_classes=["uniform-row"]):
+                                        clear_trans_files_btn = gr.Button("CLEAR", variant="secondary", elem_classes=["fixed-height-btn"], min_width=40)
+                                        srt_paste_btn = gr.Button("PASTE", variant="secondary", elem_classes=["fixed-height-btn"], min_width=40)
+                                        srt_file_btn = gr.Button("FILE", variant="secondary", elem_classes=["fixed-height-btn"], min_width=40)
+                                        srt_folder_btn = gr.Button("DIR", variant="secondary", elem_classes=["fixed-height-btn"], min_width=40)
+                                    with gr.Row(elem_classes=["uniform-row"]):
+                                        copy_srt_btn = gr.Button("COPY SRT", variant="primary", elem_classes=["fixed-height-btn"])
+                                        save_srt_btn = gr.Button("SAVE SRT AS...", variant="primary", elem_classes=["fixed-height-btn"])
+                            
+                        custom_srt = gr.File(label="Drop files here", file_types=[".srt", ".txt", ".csv", ".json", ".pdf", ".md"], file_count="multiple")
+                        
+                        with gr.Row():
+                            translate_btn = gr.Button("TRANSLATE", variant="secondary", elem_classes=["fixed-height-btn"])
+                            export_json_btn = gr.Button("EXTRACT VOCAB", variant="secondary", elem_classes=["fixed-height-btn"])
+                            
+                        export_json_status = gr.Textbox(label="VOCAB STATUS", lines=2, interactive=False)
+
+                with gr.Row(elem_classes=["uniform-row"]):
+                    start_btn = gr.Button("START", variant="secondary", elem_id="start_btn", elem_classes=["fixed-height-btn"])
+                    start_full_btn = gr.Button("FULL CYCLE", variant="secondary", elem_id="start_full_btn", elem_classes=["fixed-height-btn"])
+                    pause_btn = gr.Button("PAUSE", variant="secondary", elem_classes=["fixed-height-btn"])
+                    stop_btn = gr.Button("STOP", variant="stop", elem_id="stop_btn", elem_classes=["fixed-height-btn"])
+                    restart_btn = gr.Button("RELOAD", variant="secondary", elem_classes=["fixed-height-btn"], min_width=40)
+                    exit_btn = gr.Button("EXIT", variant="stop", elem_id="exit_btn", elem_classes=["fixed-height-btn"], min_width=40)
+
+                with gr.Row():
+                    shutdown_checkbox = gr.Checkbox(label="Shut down Windows after batch completes", value=False, elem_id="shutdown_cb")
+                    cancel_shutdown_btn = gr.Button("CANCEL SHUTDOWN", variant="stop", elem_classes=["fixed-height-btn"], visible=False, min_width=40)
                 
-                with gr.Row():
-                    language = gr.Dropdown(choices=["auto", "he", "ru", "en"], value=ui_state.get("whisper_language", "auto"), label="🌐 LANGUAGE")
-                    vad_method = gr.Dropdown(choices=["pyannote_v3", "silero_v3", "No VAD"], value=ui_state.get("whisper_vad", "pyannote_v3"), label="✂️ VAD")
-                with gr.Row():
-                    model_size = gr.Dropdown(choices=["large-v2", "large-v3", "large-v3-turbo", "turbo", "medium"], value=ui_state.get("whisper_model", "large-v2"), label="🧠 MODEL")
-                    compute_type = gr.Dropdown(choices=["float16", "int8", "float32"], value=ui_state.get("whisper_compute", "float16"), label="⚡ COMPUTE")
-                with gr.Row():
-                    eco_btn = gr.Button("🌿 ECO (quiet/cool)", elem_classes=["fixed-height-btn"])
-                
-                with gr.Accordion("🛠 ADVANCED SETTINGS", open=False):
-                    initial_prompt = gr.Textbox(label="📝 CONTEXT (-prompt)", value=ui_state.get("whisper_prompt", "auto"))
-                    hotwords = gr.Textbox(label="🔥 HOTWORDS (--hotwords)", value=ui_state.get("whisper_hotwords", ""))
-                    temperature = gr.Slider(minimum=0.0, maximum=1.0, step=0.1, value=ui_state.get("whisper_temp", 0.0), label="TEMPERATURE")
-                    rep_penalty = gr.Slider(minimum=1.0, maximum=2.0, step=0.1, value=ui_state.get("whisper_rep", 1.0), label="REP PENALTY")
-                    beam_size = gr.Slider(minimum=1, maximum=10, step=1, value=ui_state.get("whisper_beam", 5), label="BEAM SIZE")
-                    patience = gr.Slider(minimum=0.0, maximum=2.0, step=0.1, value=ui_state.get("whisper_patience", 1.0), label="PATIENCE")
-                    condition_on_prev = gr.Checkbox(label="COND ON PREV TEXT", value=ui_state.get("whisper_cond", True))
-                    no_speech_thresh = gr.Slider(minimum=0.0, maximum=1.0, step=0.1, value=ui_state.get("whisper_nospeech", 0.6), label="NO SPEECH THRESH")
-
-                with gr.Row():
-                    output_formats = gr.CheckboxGroup(choices=["srt", "vtt", "txt", "json"], value=["srt"], label="FORMATS")
-                with gr.Row():
-                    save_audio_track = gr.Checkbox(label="💾 SAVE AUDIO TRACK (MP3)", value=False, elem_id="save_audio_track")
-                with gr.Row():
-                    use_sentence = gr.Checkbox(label="BY SENTENCES", value=ui_state.get("whisper_sentence", True))
-                    plain_text_output = gr.Checkbox(
-                        label="PLAIN TEXT (no numbers, no timestamps)",
-                        value=ui_state.get("whisper_plain_text", False),
-                        info="Also writes a *_CLEAN.txt next to every output: subtitle numbers and time codes removed, lines merged into readable paragraphs."
-                    )
-                    use_print_progress = gr.Checkbox(label="PROGRESS BAR", value=ui_state.get("whisper_progress", True))
-                    use_vad_filter = gr.Checkbox(label="VAD FILTER", value=ui_state.get("whisper_vadfilter", True))
-                    use_beep_off = gr.Checkbox(label="DISABLE BEEPS", value=ui_state.get("whisper_beep", True))
-
-                with gr.Row():
-                    start_btn = gr.Button("🚀 START (SUBS ONLY)", variant="primary", elem_id="start_btn", elem_classes=["fixed-height-btn"])
-                    start_full_btn = gr.Button("🔥 FULL CYCLE (SUBS+TRANS)", variant="primary", elem_id="start_full_btn", elem_classes=["fixed-height-btn"])
-                    pause_btn = gr.Button("⏸ PAUSE", variant="secondary", elem_classes=["fixed-height-btn"])
-                    stop_btn = gr.Button("🛑 STOP", variant="stop", elem_id="stop_btn", elem_classes=["fixed-height-btn"])
-                with gr.Row():
-                    restart_btn = gr.Button("🔄 RELOAD UI", variant="secondary", elem_classes=["fixed-height-btn"], min_width=40)
-                    exit_btn = gr.Button("EXIT (app + consoles)", variant="secondary", elem_id="exit_btn", elem_classes=["fixed-height-btn"], min_width=40)
-
-                with gr.Row():
-                    shutdown_checkbox = gr.Checkbox(label="🔌 Shut down Windows after batch completes", value=False, elem_id="shutdown_cb")
-                    cancel_shutdown_btn = gr.Button("❌ Cancel shutdown", variant="stop", elem_classes=["fixed-height-btn"], visible=False, min_width=40)
-                
-                with gr.Accordion("🗑️ CLEAN OUTPUT DIRECTORY", open=False):
+                with gr.Accordion("CLEAN OUTPUT DIRECTORY", open=False):
                     with gr.Row(elem_classes=["file-manager"]):
                         with gr.Column(scale=3):
                             files_to_delete = gr.CheckboxGroup(choices=[], label="SELECT FILES TO DELETE")
                         with gr.Column(scale=1):
-                            refresh_files_btn = gr.Button("🔄 SHOW", size="sm", elem_classes=["fixed-height-btn"])
-                            del_selected_btn = gr.Button("🗑 DELETE", size="sm", variant="secondary", elem_classes=["fixed-height-btn"])
-                            del_all_btn = gr.Button("💣 ALL", size="sm", variant="stop", elem_classes=["fixed-height-btn"])
+                            refresh_files_btn = gr.Button("SHOW", size="sm", elem_classes=["fixed-height-btn"])
+                            del_selected_btn = gr.Button("DELETE", size="sm", variant="secondary", elem_classes=["fixed-height-btn"])
+                            del_all_btn = gr.Button("ALL", size="sm", variant="stop", elem_classes=["fixed-height-btn"])
                             del_status = gr.Markdown("")
                 
             # ==================== ПРАВАЯ КОЛОНКА ====================
-            with gr.Column(scale=4):
+            with gr.Column(scale=4, min_width=320):
                 metrics_panel = gr.HTML(value="<div style='background: rgba(30, 41, 59, 0.8); padding: 15px; border-radius: 12px;'><h3 style='color: white;'>Waiting...</h3></div>")
                 
                 with gr.Group(elem_id="log_group") as log_box:
-                    output_log = gr.Textbox(label="LIVE LOG", lines=4, max_lines=4, elem_classes=["big-text"], value="")
+                    output_log = gr.Textbox(label="LIVE LOG", lines=16, max_lines=16, elem_classes=["big-text"], value="")
                 
-                with gr.Column(elem_classes=["translate-box"]):
-                    gr.Markdown("### 🤖 AI TRANSLATOR")
+                with gr.Group(elem_id="text_editor_group"):
+                    clean_text_output = gr.Textbox(label="TEXT EDITOR", lines=8, max_lines=8, elem_classes=["big-text"], interactive=True, value="")
                     
-                    api_provider_val = ui_state.get("trans_provider", "Local Proxy (127.0.0.1)")
-                    with gr.Row():
-                        api_provider = gr.Radio(choices=["Local Proxy (127.0.0.1)", "OmniRoute", "Freeway", "Mistral", "Google Studio (Gemma 4)", "Groq (OSS 120b)", "OpenRouter"], value=api_provider_val, label="PROVIDER")
-                        translate_mode = gr.Radio(choices=["Files", "Text (from Editor)"], value="Files", label="MODE")
-                        
-                    target_languages = gr.CheckboxGroup(choices=TARGET_LANGUAGES, value=ui_state.get("trans_langs", TARGET_LANGUAGE_DEFAULTS), label="TARGET LANGUAGES")
-                    force_all_langs = gr.Checkbox(
-                        label="TRANSLATE ANYWAY (ignore language auto-detection)",
-                        value=False,
-                        info="By default KATAV skips a target language when the file already looks like that language — either the filename contains a marker (RU / EN / HE / ivrit) or the detected source language matches. Tick this to translate into every checked language regardless."
-                    )
-                    
-                    init_key = ""
-                    if api_provider_val == "OpenRouter": init_key = saved_keys.get("openrouter", "")
-                    elif api_provider_val == "Groq (OSS 120b)": init_key = saved_keys.get("groq", "")
-                    elif api_provider_val == "Google Studio (Gemma 4)": init_key = saved_keys.get("google_studio", "") or saved_keys.get("google", "")
-                    elif api_provider_val == "Google Gemini": init_key = saved_keys.get("google", "")
-                    elif api_provider_val == "OmniRoute": init_key = saved_keys.get("omniroute", "")
-                    elif api_provider_val == "Freeway": init_key = saved_keys.get("freeway", "") or "123"
-                    elif api_provider_val == "Mistral": init_key = saved_keys.get("mistral", "")
-                    else: init_key = "dummy" if api_provider_val == "Local Proxy (127.0.0.1)" else ""
-                    
-                    api_key_input = gr.Textbox(label=f"API Key ({api_provider_val})", value=init_key, type="password")
-                    save_key_btn = gr.Button("💾 SAVE KEY", variant="secondary", elem_classes=["fixed-height-btn"], min_width=40)
-                    
-                    if api_provider_val == "OpenRouter": init_choices = get_model_choices(OPENROUTER_MODELS)
-                    elif api_provider_val == "Groq (OSS 120b)": init_choices = GROQ_MODELS
-                    elif api_provider_val == "Google Studio (Gemma 4)": init_choices = get_model_choices(GOOGLE_STUDIO_MODELS)
-                    elif api_provider_val == "OmniRoute": init_choices = get_model_choices(OMNIROUTE_MODELS)
-                    elif api_provider_val == "Freeway": init_choices = get_model_choices(FREEWAY_MODELS)
-                    elif api_provider_val == "Mistral": init_choices = get_model_choices(MISTRAL_MODELS)
-                    else: init_choices = get_model_choices(LOCAL_PROXY_MODELS)
-                    
+                    gr.Markdown("#### TEXT EDITOR ACTIONS")
                     with gr.Row(elem_classes=["uniform-row"]):
-                        api_model = gr.Dropdown(choices=init_choices, value=ui_state.get("trans_model", "auto"), label="MODEL", allow_custom_value=True, scale=4)
-                        check_api_btn = gr.Button("🔍 CHECK API", variant="secondary", elem_classes=["fixed-height-btn"], scale=1)
-                        refresh_models_btn = gr.Button("🔄", variant="secondary", elem_classes=["fixed-height-btn"], scale=1, min_width=40)
-                        
-                    translate_status = gr.Textbox(label="TRANSLATION STATUS", lines=2, interactive=False)
-                        
-                    # 🚀 ИДЕАЛЬНЫЙ ДИЗАЙН: Кнопки файлов и SRT скомпонованы 2х2 точно как на фото!
-                    with gr.Group():
-                        with gr.Row():
-                            srt_local_path = gr.Textbox(label="AUTOFILL FILE PATH", value=ui_state.get("trans_srt_path", ""), placeholder="D:\\Video\\docs", scale=5, lines=2)
-                            with gr.Column(scale=4):
-                                with gr.Row(elem_classes=["uniform-row"]):
-                                    clear_trans_files_btn = gr.Button("🗑️ CLEAR", variant="secondary", elem_classes=["fixed-height-btn"], min_width=40)
-                                    srt_paste_btn = gr.Button("📋 PASTE", variant="secondary", elem_classes=["fixed-height-btn"], min_width=40)
-                                    srt_file_btn = gr.Button("📄 FILE", variant="secondary", elem_classes=["fixed-height-btn"], min_width=40)
-                                    srt_folder_btn = gr.Button("📂 DIR", variant="secondary", elem_classes=["fixed-height-btn"], min_width=40)
-                                with gr.Row(elem_classes=["uniform-row"]):
-                                    copy_srt_btn = gr.Button("📋 COPY SRT", variant="primary", elem_classes=["fixed-height-btn"])
-                                    save_srt_btn = gr.Button("💾 SAVE SRT AS...", variant="primary", elem_classes=["fixed-height-btn"])
-                        
-                    custom_srt = gr.File(label="Drop files here", file_types=[".srt", ".txt", ".csv", ".json", ".pdf", ".md"], file_count="multiple")
+                        save_format = gr.Dropdown(
+                            choices=["txt", "md", "csv", "json"], 
+                            value="txt", 
+                            label="FORMAT", 
+                            scale=1
+                        )
+                        save_text_btn = gr.Button("SAVE TEXT", variant="secondary", elem_classes=["fixed-height-btn"], scale=4)
                     
+                    save_status = gr.Markdown("")
+                    
+                    with gr.Accordion("SYSTEM PROMPT", open=False):
+                        sys_prompt = gr.Textbox(label="PROMPT", value=ui_state.get("trans_prompt", GEMMA_SYSTEM_PROMPT), lines=5, show_label=False)
+                
+                # ── Batch results (BC6) ──
+                with gr.Group(elem_id="batch_results_group", visible=False) as batch_results_group:
+                    gr.Markdown("### BATCH RESULTS")
+                    batch_results_status = gr.Textbox(label="BATCH RESULTS STATUS", lines=1, interactive=False, value="")
                     with gr.Row():
-                        translate_btn = gr.Button("🪄 TRANSLATE", variant="secondary", elem_classes=["fixed-height-btn"])
-                        export_json_btn = gr.Button("📚 EXTRACT VOCAB", variant="secondary", elem_classes=["fixed-height-btn"])
-                        
-                    export_json_status = gr.Textbox(label="VOCAB STATUS", lines=2, interactive=False)
+                        include_audio_checkbox = gr.Checkbox(label="Include audio (MP3)", value=False)
+                    with gr.Row():
+                        join_btn = gr.Button("JOIN", variant="secondary", elem_classes=["fixed-height-btn"])
+                        zip_btn = gr.Button("ZIP", variant="secondary", elem_classes=["fixed-height-btn"])
+                    batch_download_file = gr.File(label="Download result", interactive=False)
 
-                clean_text_output = gr.Textbox(label="📄 TEXT EDITOR (NO TIMECODES)", lines=12, max_lines=12, elem_classes=["big-text"], interactive=True, value="")
-                
-                gr.Markdown("#### 📝 TEXT EDITOR ACTIONS (NO TIMECODES)")
-                with gr.Row(elem_classes=["uniform-row"]):
-                    save_format = gr.Dropdown(
-                        choices=["txt", "md", "csv", "json"], 
-                        value="txt", 
-                        label="FORMAT", 
-                        scale=1
-                    )
-                    save_text_btn = gr.Button("💾 SAVE TEXT", variant="secondary", elem_classes=["fixed-height-btn"], scale=4)
-                
-                save_status = gr.Markdown("")
-                
-                with gr.Accordion("⚙️ SYSTEM PROMPT (AI TRANSLATOR)", open=False):
-                    sys_prompt = gr.Textbox(label="PROMPT", value=ui_state.get("trans_prompt", GEMMA_SYSTEM_PROMPT), lines=5, show_label=False)
-                
                 timer = gr.Timer(0.3)
-                timer.tick(fn=process_logs, inputs=[output_log], outputs=[output_log, metrics_panel])
+                timer.tick(fn=process_logs, inputs=[output_log], outputs=[output_log, metrics_panel, batch_results_group])
                 
                 clear_media_btn.click(
                     fn=lambda: ("", "", None, ""),
@@ -797,6 +813,7 @@ def build_app():
             last_models = keys.get("last_models", {})
             cached_models = keys.get("cached_models", {})
             loc_choices = get_model_choices(LOCAL_PROXY_MODELS)
+            
             
             def get_cached_or_default(provider_key: str, default_choices: list):
                 """Use cached models if available, otherwise fall back to static defaults."""
@@ -848,8 +865,8 @@ def build_app():
         def on_save_key(provider: str, api_key_val: str):
             """Save the current API key to whisper_api_keys.json immediately."""
             if not api_key_val and provider != "Local Proxy (127.0.0.1)":
-                gr.Warning("⚠️ Enter an API key before saving!")
-                return "⚠️ Key is empty — not saved."
+                gr.Warning("Enter an API key before saving!")
+                return "Key is empty — not saved."
             try:
                 keys = load_keys_safe()
                 provider_key_map = {
@@ -865,10 +882,10 @@ def build_app():
                 keys[pk] = api_key_val
                 with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
                     json.dump(keys, f, indent=4)
-                return f"✅ Key for {provider} saved."
+                return f"Key for {provider} saved."
             except Exception as e:
-                gr.Warning(f"❌ Save error: {e}")
-                return f"❌ Error: {e}"
+                gr.Warning(f"Save error: {e}")
+                return f"Error: {e}"
 
         save_key_btn.click(
             fn=on_save_key,
@@ -880,7 +897,7 @@ def build_app():
             """Fetch models from provider, cache them, and update dropdown."""
             models = fetch_models(provider, api_key_val)
             if not models:
-                gr.Warning(f"⚠️ Could not load models for {provider}. Check your API key and connection.")
+                gr.Warning(f"Could not load models for {provider}. Check your API key and connection.")
                 return gr.update()
             # Cache in whisper_api_keys.json
             try:
@@ -922,8 +939,8 @@ def build_app():
 
         add_url_btn.click(fn=append_url_to_input, inputs=[urls_input, new_url_input], outputs=[urls_input, new_url_input])
         new_url_input.submit(fn=append_url_to_input, inputs=[urls_input, new_url_input], outputs=[urls_input, new_url_input])
-        add_playlist_btn.click(fn=append_playlist_to_input, inputs=[urls_input, new_playlist_input], outputs=[urls_input, new_playlist_input])
-        new_playlist_input.submit(fn=append_playlist_to_input, inputs=[urls_input, new_playlist_input], outputs=[urls_input, new_playlist_input])
+        add_playlist_btn.click(fn=append_playlist_to_input, inputs=[urls_input, new_url_input], outputs=[urls_input, new_url_input])
+        new_url_input.submit(fn=append_playlist_to_input, inputs=[urls_input, new_url_input], outputs=[urls_input, new_url_input])
         paste_url_btn.click(fn=paste_url_from_clipboard, inputs=[new_url_input], outputs=[new_url_input])
 
         paste_btn.click(fn=append_clipboard_to_queue, inputs=[manual_path], outputs=manual_path)
@@ -958,7 +975,7 @@ def build_app():
             beam_size, patience, condition_on_prev, no_speech_thresh, 
             use_sentence, use_print_progress, use_vad_filter, use_beep_off, 
             use_custom_output, output_folder, output_formats, save_audio_track,
-            cookie_browser, plain_text_output
+            plain_text_output
         ]
 
         # ── All settings for snapshot ──
@@ -971,7 +988,7 @@ def build_app():
             beam_size, patience, condition_on_prev,
             no_speech_thresh, use_sentence, use_print_progress,
             use_beep_off, use_custom_output, output_folder,
-            cookie_browser, plain_text_output
+            plain_text_output
         ]
 
         check_api_btn.click(
@@ -991,7 +1008,7 @@ def build_app():
             inputs=whisper_inputs,
             outputs=[clean_text_output, hidden_dl_files, log_box, hidden_srt_paths, srt_local_path, hidden_actual_out_dir] 
         ).then(
-            fn=lambda: "⏳ SUBTITLES READY! Starting automatic translation...", outputs=translate_status
+            fn=lambda: "SUBTITLES READY! Starting automatic translation...", outputs=translate_status
         ).then(
             fn=translate_content, 
             inputs=[
@@ -1052,16 +1069,6 @@ def build_app():
         shutdown_checkbox.change(fn=on_shutdown_toggle, inputs=[shutdown_checkbox], outputs=[cancel_shutdown_btn])
         cancel_shutdown_btn.click(fn=on_cancel_shutdown, outputs=[shutdown_checkbox, cancel_shutdown_btn])
 
-        # ── Batch results (BC6) ──
-        gr.Markdown("### 📦 BATCH RESULTS")
-        batch_results_status = gr.Textbox(label="BATCH RESULTS STATUS", lines=1, interactive=False, value="")
-        with gr.Row():
-            include_audio_checkbox = gr.Checkbox(label="Include audio (MP3)", value=False)
-        with gr.Row():
-            join_btn = gr.Button("📄 JOIN INTO ONE FILE", variant="secondary", elem_classes=["fixed-height-btn"])
-            zip_btn = gr.Button("🗜 ZIP RESULTS", variant="secondary", elem_classes=["fixed-height-btn"])
-        batch_download_file = gr.File(label="Download result", interactive=False)
-
         def on_join_click(manual_path_val, use_custom, custom_dir, plain_text):
             from utils import get_actual_output_dir
             out_dir = get_actual_output_dir(manual_path_val, use_custom, custom_dir)
@@ -1071,7 +1078,7 @@ def build_app():
                     return gr.update(value=None), "No batch results to join."
                 return gr.update(value=paths[0] if len(paths) == 1 else paths), f"Joined {len(paths)} language file(s)."
             except Exception as e:
-                return gr.update(value=None), f"❌ JOIN failed: {e}"
+                return gr.update(value=None), f"JOIN failed: {e}"
 
         def on_zip_click(manual_path_val, use_custom, custom_dir, include_audio):
             from utils import get_actual_output_dir
@@ -1082,7 +1089,7 @@ def build_app():
                     return gr.update(value=None), "No batch results to zip."
                 return gr.update(value=zip_path), f"ZIP created: {os.path.basename(zip_path)}"
             except Exception as e:
-                return gr.update(value=None), f"❌ ZIP failed: {e}"
+                return gr.update(value=None), f"ZIP failed: {e}"
 
         join_btn.click(
             fn=on_join_click,

@@ -824,3 +824,56 @@ Second run of the BC batch: YouTube playlist expansion, batch post-processing (J
 - The 70/30 progress split assumes every full-cycle run passes through both phases. A standalone translation run is detected and falls back to 0-100% translation-only progress.
 - Same-language skip relies on the `LANGUAGE` setting or detected-language metadata; if both are `auto` and filename tokens are ambiguous, the skip may not trigger.
 - Queue lifecycle hooks are now in `whisper_core.py`; any future direct callers of the transcription function that do not use the queue path will bypass progress updates.
+
+---
+
+## Snapshot 2026-07-26 — BD1-BD6 Feature batch (KATAV, model: Kimi K2.7)
+
+### Summary
+BD batch: fix handler wiring after new controls broke `prepare_start`, compact two-column Gradio layout, remove cookies-for-age-restricted feature, add Google Drive OAuth private-file support, reject Spotify URLs with a clear log line, and move all inline option explanations to documentation.
+
+### What changed
+- **BD1** — `gradio_app.py`, `test_ui_wiring.py`, `.github/workflows/ci.yml`: `prepare_start` signature was extended to match the 24-element `all_settings_inputs` list; `run_transcription` and `whisper_inputs` were kept at 24 matching items; added `test_ui_wiring.py` which builds `Blocks` without launching a browser, iterates handlers, and fails if input counts do not match the Python function signature; added the test to CI next to `compileall`.
+- **BD2** — `gradio_app.py`: compact two-column layout (left 5 / right 4) with SOURCES, OUTPUT, WHISPER, TRANSLATION accordions on the left; live metrics + LIVE LOG + BATCH RESULTS on the right; removed long `info=` texts from checkboxes/radios; options row uses short labels (`BY SENTENCES`, `PLAIN TEXT`, `PROGRESS BAR`, `VAD`, `NO BEEPS`); theme button is now a 36×36 `◐` icon in the header; BATCH RESULTS is hidden until the batch completes.
+- **BD3** — `whisper_core.py`, `test_url_pipeline.py`, `docs/`, `README.md`: removed `cookie_browser` parameter, `cookiesfrombrowser` yt-dlp option, and all related UI/state/tests/docs; verified the input count still matches after removal.
+- **BD4** — `google_drive.py`, `google_client_secret.example.json`, `gradio_app.py`, `whisper_core.py`, `requirements.txt`, `docs/SETUP.md`: added `google-auth-oauthlib` installed-app OAuth flow with scope `drive.readonly`; public links are tried first via `gdown`, then private files are downloaded via the Drive API; status shown in SOURCES accordion; added setup instructions.
+- **BD5** — `whisper_core.py`, `gradio_app.py`, `README.md`, `docs/USAGE.md`: Spotify URLs are rejected immediately with the log line `[SPOTIFY] DRM-protected, cannot be downloaded. For podcasts use the RSS link or the same episode on YouTube.`; documented why Spotify is unsupported (Widevine DRM, no audio via Web API).
+- **BD6** — `README.md`, `docs/USAGE.md`: moved all option explanations from inline `info=` to compact README table and detailed USAGE table; includes language skip logic and EXIT browser-tab note.
+
+### New files
+- `google_drive.py` — OAuth installed-app flow, public/private Google Drive download, status helpers.
+- `google_client_secret.example.json` — example OAuth client secret (no real values).
+- `test_ui_wiring.py` — static Gradio wiring check.
+
+### Modified files
+- `gradio_app.py` — handler signature sync, two-column UI, theme button, Google Drive status, Spotify rejection, BATCH RESULTS visibility.
+- `whisper_core.py` — removed cookie support, wired Google Drive and Spotify handling.
+- `test_url_pipeline.py` — removed cookie test, imports Google Drive helpers from `google_drive.py`.
+- `requirements.txt` — added `google-auth-oauthlib`, `google-auth-httplib2`, `google-api-python-client`.
+- `.gitignore` — added `google_client_secret.json`, `google_drive_token.json`, `!google_client_secret.example.json`.
+- `.github/workflows/ci.yml` — added `python test_ui_wiring.py` step.
+- `README.md` — option table, Google Drive OAuth summary, Spotify note.
+- `docs/USAGE.md` — detailed control reference, Google Drive OAuth and Spotify sections.
+- `docs/SETUP.md` — Google Drive OAuth setup walkthrough.
+
+### Verification results
+- AST check: all `.py` files parse without syntax errors — `AST OK`.
+- `python -m py_compile ...` passed for `gradio_app.py`, `whisper_core.py`, `google_drive.py`, `test_ui_wiring.py`, `test_url_pipeline.py`.
+- `python test_url_pipeline.py`: 20/20 passed.
+- `python test_ui_wiring.py`: skipped locally because the installed `gradio` is incomplete in the Python 3.14 environment (`gr.Blocks` not exposed); the test will run in CI on a supported Python version.
+- No leftover `check_bd*.py` scripts.
+- `git ls-files | findstr /i "client_secret token"` only returns `google_client_secret.example.json`.
+- `git diff --check`: clean (no whitespace errors).
+
+### What was not done
+- GUI runtime verification (requires manual owner testing with real media).
+- End-to-end Google Drive OAuth flow verification without real credentials.
+- End-to-end Spotify rejection test in a running Gradio session.
+- Nothing was pushed.
+
+### Risks
+- `test_ui_wiring.py` relies on `app.dependencies` / `app.fns`, which may differ across Gradio 4.x patch versions. It falls back between the two attributes.
+- The theme toggle uses client-side JS to set a `katav-light` CSS class; actual light-mode styling depends on `custom_css` containing matching rules.
+- `get_drive_status()` fetches the Google profile at UI build time if a token exists; network timeouts are caught, but a slow response could delay initial page load.
+- BATCH RESULTS visibility is toggled by `process_logs` based on `batch_completed + batch_failed >= batch_total`; rapid queue resets may briefly flash the group.
+- Spotify rejection happens both in `append_url_to_input` (UI) and in `run_transcription` (backend), so a URL pasted directly into the multi-line field without using the button is still rejected during processing.

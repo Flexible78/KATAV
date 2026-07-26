@@ -17,8 +17,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from utils import canonical_media_url
 from whisper_core import (
     _get_playlist_entries, _download_url_to_queue,
-    _is_radio_playlist, _is_google_drive_url, _extract_drive_file_id,
+    _is_radio_playlist,
 )
+from google_drive import _is_google_drive_url, _extract_drive_file_id
 import whisper_core
 import utils
 
@@ -102,21 +103,6 @@ class PlaylistExpansionTests(unittest.TestCase):
         entries = _get_playlist_entries("https://www.youtube.com/playlist?list=PLfail")
         self.assertEqual(entries, [])
 
-    @patch("yt_dlp.YoutubeDL")
-    def test_cookie_browser_forwarded(self, mock_youtube_dl_class):
-        mock_ydl = MagicMock()
-        mock_youtube_dl_class.return_value.__enter__ = MagicMock(return_value=mock_ydl)
-        mock_youtube_dl_class.return_value.__exit__ = MagicMock(return_value=False)
-        mock_ydl.extract_info.return_value = {"entries": []}
-
-        _get_playlist_entries("https://www.youtube.com/playlist?list=PLcookies", cookie_browser="chrome")
-
-        mock_youtube_dl_class.assert_called_once()
-        call_args = mock_youtube_dl_class.call_args
-        opts = call_args.kwargs if call_args.kwargs else call_args[0][0]
-        self.assertIn("cookiesfrombrowser", opts)
-        self.assertEqual(opts["cookiesfrombrowser"], ("chrome",))
-
 
 class FakeProcess:
     """Fake subprocess.Popen result for _download_url_to_queue tests."""
@@ -189,7 +175,6 @@ class DownloadUrlToQueueTests(unittest.TestCase):
             result = _download_url_to_queue(
                 "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
                 os.path.join(tmpdir, "output"),
-                "None",
                 files_to_process,
                 item_idx=1,
             )
@@ -239,7 +224,6 @@ class DownloadUrlToQueueTests(unittest.TestCase):
             result = _download_url_to_queue(
                 "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
                 output_dir,
-                "None",
                 files_to_process,
                 item_idx=1,
             )
@@ -280,7 +264,6 @@ class DownloadUrlToQueueTests(unittest.TestCase):
             result = _download_url_to_queue(
                 "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
                 output_dir,
-                "None",
                 files_to_process,
                 item_idx=1,
             )
@@ -304,7 +287,6 @@ class DownloadUrlToQueueTests(unittest.TestCase):
             result = _download_url_to_queue(
                 "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
                 "/tmp/output",
-                "None",
                 files_to_process,
             )
 

@@ -26,7 +26,32 @@ KATAV is a local-first Windows toolkit for speech recognition. Audio and video t
 - **Per-provider model memory** — the last working model for each provider is remembered automatically.
 - **Dynamic model lists** — fetch the list of available models directly from each provider with the refresh button.
 - **Batch processing** — transcribe multiple files in one run, with an optional cooldown pause between files to manage GPU temperature.
+- **Google Drive support** — download private Google Drive files after OAuth sign-in; public shared links work without authentication.
 - **Browser UI** — a Gradio-based web interface runs locally on your machine.
+
+## UI options
+
+| Control | What it does |
+| --- | --- |
+| BY SENTENCES | Split Whisper output by sentences instead of by arbitrary chunk size. |
+| PLAIN TEXT | Also write a `*_CLEAN.txt` file with block numbers and timestamps removed. |
+| PROGRESS BAR | Show a live progress bar in the log while Whisper runs. |
+| VAD | Enable voice-activity detection to skip silent sections. |
+| NO BEEPS | Suppress the completion beep after each file. |
+| SAVE MP3 | Extract the audio track as an MP3 file alongside the transcript. |
+| TRANSLATE ANYWAY | Force translation into every checked target language, ignoring auto-detected source language. |
+| + PLAYLIST | Add a YouTube playlist URL and expand it into individual videos. |
+| JOIN | Merge all translated text files into one document per language. |
+| ZIP | Pack produced files into a downloadable ZIP archive. |
+| TOGGLE THEME | Switch between light and dark theme. |
+| EXIT | Stop the app and attempt to close the browser tab. |
+
+## Supported sources
+
+- **Local files**: any common audio/video format (`mp3`, `wav`, `mp4`, `mkv`, etc.).
+- **YouTube**: single videos, playlists, and Shorts.
+- **Google Drive**: public shared links and private files after OAuth sign-in.
+- **Spotify**: **not supported**. Spotify audio is DRM-protected and cannot be downloaded. For podcasts, use the RSS feed or the same episode on YouTube.
 
 ## Requirements
 
@@ -55,6 +80,16 @@ For a step-by-step guide on transcribing, translating, and extracting vocabulary
 ## Security
 
 This repository contains **no API keys, no personal paths, no media files, and no transcripts**. All credentials are read from a local, gitignored `whisper_api_keys.json` file that you create on your own machine from the provided `whisper_api_keys.example.json` template. The local Whisper executable path is resolved from an environment variable, a local `whisper_settings.json` file, or autodiscovery — never hardcoded.
+
+## Google Drive OAuth
+
+To transcribe private Google Drive files, sign in through the app:
+
+1. Create a Desktop OAuth client in [Google Cloud Console](https://console.cloud.google.com/), enable the Drive API, and download the JSON secret.
+2. Rename the downloaded file to `google_client_secret.json` and place it next to `main.py`.
+3. Click **SIGN IN TO GOOGLE** in the app and grant read-only access.
+
+See [docs/SETUP.md](docs/SETUP.md) for the full walkthrough.
 
 ## Troubleshooting
 

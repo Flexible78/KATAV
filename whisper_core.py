@@ -26,6 +26,7 @@ from utils import (
 )
 from ui_manager import ui_state
 from queue_manager import batch_queue
+from google_drive import is_google_drive_url, download_google_drive_file
 
 def _gpu_power_limit_set(watts):
     """Best-effort: read current GPU power limit and set a new cap. Returns previous limit or None."""
@@ -61,7 +62,7 @@ def _sanitize_filename(text: str) -> str:
     return text or "media"
 
 
-def _get_url_title(url: str, cookie_browser: str = None) -> str:
+def _get_url_title(url: str) -> str:
     """Best-effort metadata fetch for the video title."""
     try:
         import yt_dlp
@@ -71,8 +72,6 @@ def _get_url_title(url: str, cookie_browser: str = None) -> str:
             "noplaylist": True,
             "socket_timeout": 10,
         }
-        if cookie_browser and cookie_browser != "None":
-            opts["cookiesfrombrowser"] = (cookie_browser,)
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)
             return (info or {}).get("title", "") or ""
@@ -92,7 +91,7 @@ def _get_playlist_id(url: str) -> str:
     return ""
 
 
-def _get_playlist_entries(url: str, cookie_browser: str = None) -> List[Dict[str, Any]]:
+def _get_playlist_entries(url: str) -> List[Dict[str, Any]]:
     """Return a list of {'id', 'url', 'title'} for each entry in a playlist."""
     try:
         import yt_dlp
@@ -103,8 +102,6 @@ def _get_playlist_entries(url: str, cookie_browser: str = None) -> List[Dict[str
             "skip_download": True,
             "socket_timeout": 10,
         }
-        if cookie_browser and cookie_browser != "None":
-            opts["cookiesfrombrowser"] = (cookie_browser,)
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)
             entries = (info or {}).get("entries", []) or []
@@ -136,7 +133,7 @@ def _is_radio_playlist(url: str) -> bool:
     return list_id.upper().startswith(("RD", "UL"))
 
 
-def expand_playlist(url: str, cookie_browser: str = None) -> List[Dict[str, Any]]:
+def expand_playlist(url: str) -> List[Dict[str, Any]]:
     """
     Expand a YouTube playlist into a list of video entries.
 
@@ -145,7 +142,7 @@ def expand_playlist(url: str, cookie_browser: str = None) -> List[Dict[str, Any]
     - Deduplicates by video id.
     - Attaches playlist_index and playlist_title to each entry.
     """
-    entries = _get_playlist_entries(url, cookie_browser)
+    entries = _get_playlist_entries(url)
     if not entries:
         return []
 
@@ -175,60 +172,16 @@ def _is_playlist_url(url: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Google Drive support (BC8)
+# Google Drive / Spotify helpers
 # ---------------------------------------------------------------------------
-_DRIVE_RE = re.compile(r"^https?://(?:www\.)?drive\.google\.com/file/d/([^/]+)/")
-_DRIVE_RE_ALT = re.compile(r"[?&]id=([^&]+)")
-
-
-def _is_google_drive_url(url: str) -> bool:
-    return "drive.google.com" in url
-
-
-def _extract_drive_file_id(url: str) -> str:
-    """Extract the Google Drive file id from a shared link."""
-    m = _DRIVE_RE.search(url)
-    if m:
-        return m.group(1)
-    m = _DRIVE_RE_ALT.search(url)
-    if m:
-        return m.group(1)
-    return ""
-
-
-def _download_google_drive(url: str, output_dir: str) -> str:
-    """Download a publicly shared Google Drive file to output_dir. Returns the local path or empty string."""
-    try:
-        import gdown
-    except ImportError:
-        log_queue.put("[DRIVE] gdown is not installed. Run: pip install gdown==5.2.0\n")
-        return ""
-
-    file_id = _extract_drive_file_id(url)
-    if not file_id:
-        log_queue.put(f"[DRIVE] Could not extract file id from link: {url}\n")
-        return ""
-
-    os.makedirs(output_dir, exist_ok=True)
-    output_path = os.path.join(output_dir, f"drive_{file_id}")
-
-    try:
-        # gdown raises an error or returns the html page on private links
-        downloaded = gdown.download(id=file_id, output=output_path, quiet=True)
-        if not downloaded or not os.path.isfile(output_path):
-            raise RuntimeError("not publicly shared or not downloadable")
-        size_mb = os.path.getsize(output_path) / (1024 * 1024)
-        log_queue.put(f"[DRIVE] Downloaded: {output_path} ({size_mb:.2f} MB)\n")
-        return output_path
-    except Exception:
-        log_queue.put("[DRIVE] The link is not publicly shared. Open Share -> Anyone with the link, or download the file manually.\n")
-        return ""
+def _is_spotify_url(url: str) -> bool:
+    return "open.spotify.com" in url
 
 
 # ---------------------------------------------------------------------------
 # URL title / naming helpers
 # ---------------------------------------------------------------------------
-def _output_title_for_item(url: str, cookie_browser: str, item_idx: int) -> str:
+def _output_title_for_item(url: str, item_idx: int) -> str:
     """Return a display/file title, prefixing playlist items with 001_, 002_, etc."""
     # Prefer cached metadata/name to avoid redundant network calls, but only
     # accept real strings (defensive against mocks or malformed metadata).
@@ -245,8 +198,7 @@ def _output_title_for_item(url: str, cookie_browser: str, item_idx: int) -> str:
                     title = item.name
         except Exception:
             pass
-    if not title:
-        title = _get_url_title(url, cookie_browser) or _extract_youtube_id(url) or "media"
+    if not title:                title = _get_url_title(url) or _extract_youtube_id(url) or "media"
     if item_idx is not None:
         try:
             item = batch_queue.get_item(item_idx)
@@ -310,7 +262,7 @@ def _extract_youtube_id(url: str) -> str:
 
 
 def _download_url_to_queue(
-    url: str, output_dir: str, cookie_browser: str,
+    url: str, output_dir: str,
     files_to_process: List[Any],
     item_idx: int = None,
 ) -> str:
@@ -334,7 +286,7 @@ def _download_url_to_queue(
     if cached_path and os.path.isfile(cached_path):
         size_mb = os.path.getsize(cached_path) / (1024 * 1024)
         log_queue.put(f"[URL] Cached audio reused: {video_id}.mp3\n")
-        title = _output_title_for_item(url, cookie_browser, item_idx)
+        title = _output_title_for_item(url, item_idx)
         local_path = _copy_to_output(cached_path, output_dir, title)
         files_to_process.append(local_path)
         if item_idx is not None:
@@ -354,8 +306,6 @@ def _download_url_to_queue(
         "--print", "after_move:filepath",
         "--progress",
     ]
-    if cookie_browser and cookie_browser != "None":
-        cmd.extend(["--cookies-from-browser", cookie_browser])
     cmd.append(url)
 
     printed_path = ""
@@ -401,7 +351,7 @@ def _download_url_to_queue(
             if process.returncode == 0 and printed_path and os.path.isfile(printed_path):
                 size_mb = os.path.getsize(printed_path) / (1024 * 1024)
                 log_queue.put(f"[URL] Audio ready: {printed_path} ({size_mb:.2f} MB)\n")
-                title = _output_title_for_item(url, cookie_browser, item_idx)
+                title = _output_title_for_item(url, item_idx)
                 local_path = _copy_to_output(printed_path, output_dir, title)
                 files_to_process.append(local_path)
                 if item_idx is not None:
@@ -423,8 +373,8 @@ def _log_url_error(url: str, video_id: str, error_line: str):
     """Classify yt-dlp output and emit a single actionable log line."""
     err_lower = (error_line or "").lower()
     vid = video_id or os.path.basename(url) or url
-    if "sign in" in err_lower or "signin" in err_lower or "age-restricted" in err_lower or "age restricted" in err_lower or "cookies" in err_lower:
-        log_queue.put("[ERROR] YouTube requires sign-in for this video. Set COOKIES FROM BROWSER and retry.\n")
+    if "sign in" in err_lower or "signin" in err_lower:
+        log_queue.put("[ERROR] YouTube requires sign-in for this video. Skipped.\n")
     elif "video unavailable" in err_lower or "private" in err_lower or "removed" in err_lower or "unavailable" in err_lower:
         log_queue.put(f"[ERROR] Video is unavailable or private: {vid}. Skipped.\n")
     else:
@@ -438,7 +388,7 @@ def run_transcription(
     condition_on_prev: bool, no_speech_thresh: float, use_sentence: bool,
     use_print_progress: bool, use_vad_filter: bool, use_beep_off: bool,
     use_custom_output: bool, output_dir: str, output_formats: List[str], save_audio_track: bool,
-    cookie_browser: str = "None", plain_text_output: bool = False
+    plain_text_output: bool = False
 ) -> Tuple[gr.update, gr.update, gr.update, str, str, str]:
     global process_active, current_process, current_percent, time_elapsed, time_remaining, audio_speed, full_whisper_log, stop_requested, current_action
     
@@ -450,7 +400,6 @@ def run_transcription(
         "whisper_formats": output_formats, "whisper_sentence": use_sentence, "whisper_progress": use_print_progress,
         "whisper_vadfilter": use_vad_filter, "whisper_beep": use_beep_off,
         "whisper_save_audio_track": save_audio_track,
-        "whisper_cookie_browser": cookie_browser,
         "whisper_plain_text": plain_text_output
     })
 
@@ -496,7 +445,7 @@ def run_transcription(
                     if _is_radio_playlist(url):
                         log_queue.put(f"[PLAYLIST] Auto-generated playlists (RD/UL) are not supported: {url}\n")
                         continue
-                    entries = expand_playlist(url, cookie_browser)
+                    entries = expand_playlist(url)
                     if entries:
                         log_queue.put(f"[INFO] Playlist detected: {len(entries)} items queued.\n")
                         item = url_item_map.get(utils.canonical_media_url(url))
@@ -514,15 +463,21 @@ def run_transcription(
             }
 
             # Separate Google Drive links from streaming/media URLs.
-            drive_urls = [u for u in urls if _is_google_drive_url(u)]
-            stream_urls = [u for u in urls if not _is_google_drive_url(u)]
+            drive_urls = [u for u in urls if is_google_drive_url(u)]
+            stream_urls = [u for u in urls if not is_google_drive_url(u) and not _is_spotify_url(u)]
+            spotify_urls = [u for u in urls if _is_spotify_url(u)]
+            for s_url in spotify_urls:
+                log_queue.put("[SPOTIFY] DRM-protected, cannot be downloaded. For podcasts use the RSS link or the same episode on YouTube.\n")
+                s_item = url_item_map.get(utils.canonical_media_url(s_url))
+                if s_item is not None:
+                    batch_queue.mark_item_failed(s_item.idx, "Spotify is DRM-protected and not supported")
 
             for url in drive_urls:
                 if stop_requested:
                     break
                 item = url_item_map.get(url)
                 try:
-                    local_path = _download_google_drive(url, _url_cache_dir())
+                    local_path = download_google_drive_file(url, _url_cache_dir())
                     if local_path:
                         files_to_process.append(local_path)
                         if item is not None:
@@ -543,7 +498,7 @@ def run_transcription(
                     item = url_item_map.get(canonical_url)
                     try:
                         _download_url_to_queue(
-                            url, global_out_dir, cookie_browser,
+                            url, global_out_dir,
                             files_to_process,
                             item_idx=item.idx if item else None
                         )
