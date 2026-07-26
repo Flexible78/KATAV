@@ -150,40 +150,79 @@ def kill_program():
     own_pid = os.getpid()
     pid_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".katav_pids")
     pids_to_kill = []
+    by_title = False
 
     # 2. Read recorded PIDs and filter out own PID.
+    #    Read in binary to tolerate UTF-16LE, UTF-8 or ANSI; strip NUL bytes
+    #    and extract decimal PID substrings.
     if os.path.exists(pid_file):
         try:
-            with open(pid_file, 'r', encoding='utf-8') as f:
-                for line in f:
-                    pid_str = line.strip()
-                    if pid_str and pid_str.isdigit():
-                        pid = int(pid_str)
-                        if pid != own_pid:
-                            pids_to_kill.append(pid)
-        except Exception:
-            pass
+            raw = open(pid_file, "rb").read()
+            cleaned = raw.replace(b"\x00", b"")
+            text = cleaned.decode("utf-8", errors="ignore")
+            for pid_str in re.findall(r"\d+", text):
+                pid = int(pid_str)
+                if pid != own_pid:
+                    pids_to_kill.append(pid)
+        except Exception as e:
+            logging.warning(f"[EXIT] Failed to read PID file {pid_file}: {e}")
 
-    # 3. Fallback: find the process listening on port 8080.
-    if not pids_to_kill and os.name == 'nt':
-        try:
-            result = _subprocess.run(
-                ["powershell", "-NoProfile", "-Command",
-                 "(Get-NetTCPConnection -LocalPort 8080 -ErrorAction SilentlyContinue).OwningProcess"],
-                capture_output=True, text=True, timeout=5,
-                creationflags=0x08000000,
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                for pid_str in result.stdout.strip().splitlines():
-                    pid_str = pid_str.strip()
-                    if pid_str and pid_str.isdigit():
-                        pid = int(pid_str)
-                        if pid != own_pid:
-                            pids_to_kill.append(pid)
-        except Exception:
-            pass
+    # 3. Fallback: find processes listening on ports 8080 and 7861,
+    #    walking up from the python child to its cmd.exe parent.
+    if os.name == 'nt':
+        if not pids_to_kill:
+            for port in (8080, 7861):
+                try:
+                    result = _subprocess.run(
+                        ["powershell", "-NoProfile", "-Command",
+                         f"(Get-NetTCPConnection -LocalPort {port} -ErrorAction SilentlyContinue).OwningProcess"],
+                        capture_output=True, text=True, timeout=5,
+                        creationflags=0x08000000,
+                    )
+                    if result.returncode == 0 and result.stdout.strip():
+                        for pid_str in result.stdout.strip().splitlines():
+                            pid_str = pid_str.strip()
+                            if pid_str and pid_str.isdigit():
+                                pid = int(pid_str)
+                                if pid == own_pid:
+                                    continue
+                                # Prefer the parent cmd.exe so the console window dies.
+                                try:
+                                    proc_info = _subprocess.run(
+                                        ["powershell", "-NoProfile", "-Command",
+                                         f"(Get-CimInstance Win32_Process -Filter \"ProcessId={pid}\").ParentProcessId"],
+                                        capture_output=True, text=True, timeout=5,
+                                        creationflags=0x08000000,
+                                    )
+                                    if proc_info.returncode == 0 and proc_info.stdout.strip():
+                                        parent = int(proc_info.stdout.strip().splitlines()[0].strip())
+                                        if parent and parent != own_pid and parent not in pids_to_kill:
+                                            pids_to_kill.append(parent)
+                                        elif pid != own_pid and pid not in pids_to_kill:
+                                            pids_to_kill.append(pid)
+                                    else:
+                                        if pid != own_pid and pid not in pids_to_kill:
+                                            pids_to_kill.append(pid)
+                                except Exception:
+                                    if pid != own_pid and pid not in pids_to_kill:
+                                        pids_to_kill.append(pid)
+                except Exception:
+                    pass
 
-    # 4. Kill recorded/fallback PIDs.
+        # 4. Fallback by window titles (works even without a PID file).
+        if not pids_to_kill:
+            try:
+                for title in ("KATAV Main*", "KATAV AI Proxy*"):
+                    _subprocess.run(
+                        ["taskkill", "/F", "/T", "/FI", f"WINDOWTITLE eq {title}"],
+                        capture_output=True, text=True, timeout=5,
+                        creationflags=0x08000000,
+                    )
+                by_title = True
+            except Exception:
+                pass
+
+    # 5. Kill recorded/fallback PIDs.
     if os.name == 'nt':
         for pid in pids_to_kill:
             try:
@@ -195,15 +234,16 @@ def kill_program():
             except Exception:
                 pass
 
-    # 5. Delete PID file.
+    # 6. Delete PID file.
     try:
         if os.path.exists(pid_file):
             os.remove(pid_file)
     except Exception:
         pass
 
-    # 6. Log and exit.
-    log_queue.put(f"[EXIT] Terminating {len(pids_to_kill)} child process(es)...\n")
+    # 7. Log and exit.
+    logging.info(f"[EXIT] killed pids: {pids_to_kill} | by title: {'yes' if by_title else 'no'}")
+    logging.shutdown()
     os._exit(0)
 
 def unique_path(path: str) -> str:
