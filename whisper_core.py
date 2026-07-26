@@ -119,6 +119,7 @@ def _download_url_to_queue(
     cmd.append(url)
 
     printed_path = ""
+    first_error_line = ""
     process = None
     try:
         process = subprocess.Popen(
@@ -145,6 +146,11 @@ def _download_url_to_queue(
                 log_queue.put(line + "\n")
                 if line.endswith(".mp3") and os.path.isfile(line):
                     printed_path = line
+                # Capture the first real error line for classification
+                if not first_error_line and (
+                    "ERROR:" in line or "error" in line.lower() or "sign in" in line.lower()
+                ):
+                    first_error_line = line
 
         if not utils.stop_requested:
             try:
@@ -161,14 +167,26 @@ def _download_url_to_queue(
                     batch_queue.update_url_to_local(item_idx, printed_path, name=os.path.basename(printed_path))
                 return printed_path
             else:
-                err_msg = f"yt-dlp exited with code {process.returncode} for URL: {url}"
-                log_queue.put(f"❌ {err_msg}\n")
+                _log_url_error(url, video_id, first_error_line)
     except Exception as e:
         log_queue.put(f"❌ URL download error for {url}: {e}\n")
     finally:
         utils.current_process = None
 
     return ""
+
+
+def _log_url_error(url: str, video_id: str, error_line: str):
+    """Classify yt-dlp output and emit a single actionable log line."""
+    err_lower = (error_line or "").lower()
+    vid = video_id or os.path.basename(url) or url
+    if "sign in" in err_lower or "signin" in err_lower or "age-restricted" in err_lower or "age restricted" in err_lower or "cookies" in err_lower:
+        log_queue.put("[ERROR] YouTube requires sign-in for this video. Set COOKIES FROM BROWSER and retry.\n")
+    elif "video unavailable" in err_lower or "private" in err_lower or "removed" in err_lower or "unavailable" in err_lower:
+        log_queue.put(f"[ERROR] Video is unavailable or private: {vid}. Skipped.\n")
+    else:
+        msg = error_line.strip() if error_line else f"yt-dlp exited with code for URL: {url}"
+        log_queue.put(f"[ERROR] Download failed for {vid}: {msg}\n")
 
 def run_transcription(
     input_files: List[Any], manual_path: str, urls_input: str, initial_prompt: str, hotwords: str,
@@ -236,11 +254,16 @@ def run_transcription(
                     if stop_requested: break
                     canonical_url = utils.canonical_media_url(url)
                     item = url_item_map.get(canonical_url)
-                    _download_url_to_queue(
-                        url, global_out_dir, cookie_browser,
-                        files_to_process, downloaded_audio_files,
-                        item_idx=item.idx if item else None
-                    )
+                    try:
+                        _download_url_to_queue(
+                            url, global_out_dir, cookie_browser,
+                            files_to_process, downloaded_audio_files,
+                            item_idx=item.idx if item else None
+                        )
+                    except Exception as dl_exc:
+                        log_queue.put(f"[ERROR] URL download failed and was skipped: {url} ({dl_exc})\n")
+                        if item is not None:
+                            batch_queue.mark_item_failed(item.idx, str(dl_exc))
                     
     files_to_process = list(set(files_to_process))
     
