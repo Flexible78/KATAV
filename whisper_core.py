@@ -218,7 +218,10 @@ def run_transcription(
             if stop_requested and not current_file_downloads:
                 rescued_text = rescue_text_from_log(full_whisper_log)
                 if rescued_text:
-                    rescued_path = os.path.join(current_out_dir, f"{base_name}_PARTIAL.txt")
+                    partial_path = os.path.join(current_out_dir, f"{base_name}_PARTIAL.txt")
+                    rescued_path = utils.unique_path(partial_path)
+                    if rescued_path != partial_path:
+                        log_queue.put(f"[SAVE] Existing file kept. Writing {os.path.basename(rescued_path)} instead.\n")
                     try:
                         with open(rescued_path, "w", encoding="utf-8") as f: f.write(rescued_text)
                         current_file_downloads.append(rescued_path)

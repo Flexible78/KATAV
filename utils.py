@@ -205,6 +205,21 @@ def kill_program():
     log_queue.put(f"[EXIT] Terminating {len(pids_to_kill)} child process(es)...\n")
     os._exit(0)
 
+def unique_path(path: str) -> str:
+    """Return path if free, else path with _1, _2, ... before the extension."""
+    if not os.path.exists(path):
+        return path
+    base, ext = os.path.splitext(path)
+    for i in range(1, 1000):
+        candidate = f"{base}_{i}{ext}"
+        if not os.path.exists(candidate):
+            return candidate
+    # Fall back to timestamp after 999 attempts
+    import datetime
+    timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+    return f"{base}_{timestamp}{ext}"
+
+
 def process_logs(current_log: str) -> Tuple[str, str]:
     global current_percent, time_elapsed, time_remaining, audio_speed, full_whisper_log, current_action
     new_text = current_log

@@ -434,7 +434,10 @@ def translate_content(
                 
                 partial_tag = "_PARTIAL" if getattr(utils, 'stop_requested', False) else ""
                 translated_path = os.path.join(out_dir, f"{base_name}_TRANSLATED_{lang_suffix}{partial_tag}{ext}")
-                
+                translated_path = utils.unique_path(translated_path)
+                if translated_path != os.path.join(out_dir, f"{base_name}_TRANSLATED_{lang_suffix}{partial_tag}{ext}"):
+                    live_log(f"[SAVE] Existing file kept. Writing {os.path.basename(translated_path)} instead.")
+
                 try:
                     with open(translated_path, "w", encoding="utf-8") as f: f.write(final_translated_text)
                     saved_files.append(translated_path)
