@@ -7,6 +7,8 @@ whisper_settings.json
 # Output and temp directories
 Outputs/
 outputs/
+Outputs/_url_cache/
+outputs/_url_cache/
 bkp/
 .venv/
 venv/

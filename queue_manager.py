@@ -431,6 +431,21 @@ class QueueManager:
                     self._total_media_seconds += duration
                     break
 
+    def update_url_to_local(self, idx: int, local_path: str, duration: float = -1.0, name: str = ""):
+        """Replace a URL item's working path with a local audio file path."""
+        with self._lock:
+            for it in self._items:
+                if it.idx == idx:
+                    # Preserve the original URL before overwriting
+                    if "full_url" not in it.metadata:
+                        it.metadata["full_url"] = it.path_or_url
+                    it.path_or_url = local_path
+                    if duration > 0:
+                        it.duration = duration
+                    if name:
+                        it.name = name
+                    break
+
     def set_cancelled(self):
         with self._lock:
             self._cancelled = True

@@ -25,6 +25,7 @@ from utils import (
     current_action, enqueue_output
 )
 from ui_manager import ui_state
+from queue_manager import batch_queue
 
 def _gpu_power_limit_set(watts):
     """Best-effort: read current GPU power limit and set a new cap. Returns previous limit or None."""
@@ -50,42 +51,78 @@ def _gpu_power_limit_restore(prev):
         pass
 
 
-def _strip_ansi(text: str) -> str:
-    """Remove ANSI escape sequences from yt-dlp output."""
-    return re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', text)
+def _extract_youtube_id(url: str) -> str:
+    """Extract the v= / youtu.be id from a canonical YouTube URL."""
+    try:
+        from urllib.parse import parse_qs, urlparse
+        parsed = urlparse(url)
+        if parsed.path in ("/watch", "/watch/"):
+            return parse_qs(parsed.query).get("v", [None])[0]
+        if "youtu.be" in parsed.netloc:
+            return parsed.path.strip("/").split("/")[0]
+    except Exception:
+        pass
+    return ""
+
+
+def _url_cache_dir() -> str:
+    """Return the dedicated URL audio cache directory."""
+    from config import DEFAULT_OUTPUT_DIR
+    cache = os.path.join(DEFAULT_OUTPUT_DIR, "_url_cache")
+    os.makedirs(cache, exist_ok=True)
+    return cache
 
 
 def _download_url_to_queue(
     url: str, output_dir: str, cookie_browser: str,
-    files_to_process: List[Any], downloaded_audio_files: List[Any]
-):
-    """Download a single URL via yt-dlp CLI (subprocess), stream output, and queue the result."""
+    files_to_process: List[Any], downloaded_audio_files: List[Any],
+    item_idx: int = None,
+) -> str:
+    """Download a single URL via yt-dlp CLI (subprocess), stream output, and queue the result.
+
+    Returns the path to the downloaded/cached audio file, or an empty string on failure.
+    """
     original_url = url
     url = utils.canonical_media_url(url)
     if url != original_url:
         log_queue.put(f"[URL] Normalised: {original_url} -> {url}\n")
-    log_queue.put(f"⬇️ Downloading: {url}\n")
+    log_queue.put(f"️ Downloading: {url}\n")
 
-    is_playlist = "/playlist?" in url or "list=" in url
-    temp_dir = os.path.join(output_dir, f".ytdlp_{os.getpid()}_{int(time.time()*1000)}")
-    os.makedirs(temp_dir, exist_ok=True)
+    cache_dir = _url_cache_dir()
+    video_id = _extract_youtube_id(url)
+    cached_path = os.path.join(cache_dir, f"{video_id}.mp3") if video_id else ""
+
+    # Reuse cached audio if it already exists
+    if cached_path and os.path.isfile(cached_path):
+        size_mb = os.path.getsize(cached_path) / (1024 * 1024)
+        log_queue.put(f"[URL] Cached audio reused: {video_id}.mp3\n")
+        files_to_process.append(cached_path)
+        downloaded_audio_files.append(cached_path)
+        if item_idx is not None:
+            batch_queue.update_url_to_local(item_idx, cached_path, name=os.path.basename(cached_path))
+        return cached_path
 
     cmd = [
         sys.executable, "-m", "yt_dlp",
         "--no-warnings",
         "--no-playlist",
         "-f", "bestaudio/best",
-        "-o", "%(title)s.%(ext)s",
+        "-x",
+        "--audio-format", "mp3",
+        "--audio-quality", "0",
+        "-o", os.path.join(cache_dir, "%(id)s.%(ext)s"),
+        "--print", "after_move:filepath",
         "--progress",
     ]
     if cookie_browser and cookie_browser != "None":
         cmd.extend(["--cookies-from-browser", cookie_browser])
     cmd.append(url)
 
+    printed_path = ""
     process = None
     try:
         process = subprocess.Popen(
-            cmd, cwd=temp_dir, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, encoding="utf-8", errors="replace", bufsize=1,
             creationflags=0x08000000 if os.name == "nt" else 0,
         )
@@ -103,45 +140,35 @@ def _download_url_to_queue(
                         pass
                 log_queue.put("🛑 Download cancelled by user.\n")
                 break
-            line = _strip_ansi(raw_line).strip()
+            line = utils.strip_ansi(raw_line).strip()
             if line:
                 log_queue.put(line + "\n")
-                lower = line.lower()
-                if "sign in" in lower or "signin" in lower:
-                    log_queue.put("[ERROR] YouTube requires sign-in for this video. Set COOKIES FROM BROWSER and retry.\n")
-                elif "age-restricted" in lower or "age restricted" in lower:
-                    log_queue.put("[ERROR] YouTube requires sign-in for this video. Set COOKIES FROM BROWSER and retry.\n")
+                if line.endswith(".mp3") and os.path.isfile(line):
+                    printed_path = line
 
         if not utils.stop_requested:
-            process.wait(timeout=10)
-            if process.returncode == 0:
-                downloaded = [os.path.join(temp_dir, f) for f in os.listdir(temp_dir) if os.path.isfile(os.path.join(temp_dir, f))]
-                for f in downloaded:
-                    dest = os.path.join(output_dir, os.path.basename(f))
-                    if os.path.abspath(f) != os.path.abspath(dest):
-                        try:
-                            os.replace(f, dest)
-                        except Exception:
-                            shutil.move(f, dest)
-                    if os.path.exists(dest):
-                        files_to_process.append(dest)
-                        downloaded_audio_files.append(dest)
-                        log_queue.put(f"✅ Successfully extracted: {os.path.basename(dest)}\n")
+            try:
+                process.wait(timeout=10)
+            except Exception:
+                pass
+
+            if process.returncode == 0 and printed_path and os.path.isfile(printed_path):
+                size_mb = os.path.getsize(printed_path) / (1024 * 1024)
+                log_queue.put(f"[URL] Audio ready: {printed_path} ({size_mb:.2f} MB)\n")
+                files_to_process.append(printed_path)
+                downloaded_audio_files.append(printed_path)
+                if item_idx is not None:
+                    batch_queue.update_url_to_local(item_idx, printed_path, name=os.path.basename(printed_path))
+                return printed_path
             else:
                 err_msg = f"yt-dlp exited with code {process.returncode} for URL: {url}"
                 log_queue.put(f"❌ {err_msg}\n")
     except Exception as e:
         log_queue.put(f"❌ URL download error for {url}: {e}\n")
     finally:
-        try:
-            for f in os.listdir(temp_dir):
-                fp = os.path.join(temp_dir, f)
-                if os.path.exists(fp):
-                    os.remove(fp)
-            os.rmdir(temp_dir)
-        except Exception:
-            pass
         utils.current_process = None
+
+    return ""
 
 def run_transcription(
     input_files: List[Any], manual_path: str, urls_input: str, initial_prompt: str, hotwords: str,
@@ -198,13 +225,21 @@ def run_transcription(
             log_queue.put("⚠️ ERROR: yt-dlp library is not installed! Run: pip install yt-dlp\n")
         else:
             urls = [u.strip() for u in urls_input.split('\n') if u.strip()]
+            # Map canonical URL to the corresponding queue item for metadata updates.
+            url_item_map = {
+                utils.canonical_media_url(it.path_or_url): it
+                for it in batch_queue.get_items() if it.source == "url"
+            }
             if urls:
                 log_queue.put(f"[STAGE] Downloading audio from {len(urls)} URL(s) (yt-dlp)...\n")
                 for url in urls:
                     if stop_requested: break
+                    canonical_url = utils.canonical_media_url(url)
+                    item = url_item_map.get(canonical_url)
                     _download_url_to_queue(
                         url, global_out_dir, cookie_browser,
-                        files_to_process, downloaded_audio_files
+                        files_to_process, downloaded_audio_files,
+                        item_idx=item.idx if item else None
                     )
                     
     files_to_process = list(set(files_to_process))
