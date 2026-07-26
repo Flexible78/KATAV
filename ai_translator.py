@@ -105,7 +105,10 @@ def translate_content(
         elif hidden_srt_paths:
             for p in hidden_srt_paths.split('|'):
                 if p.strip() and os.path.isfile(p.strip()) and p.strip().lower().endswith(valid_exts): files_to_translate.append(p.strip())
-        if not files_to_translate: return "❌ Error: No supported files found (srt, txt, csv, json, pdf, md)!", "", ""
+        if not files_to_translate:
+            if not hidden_srt_paths.strip() and not srt_local_path.strip() and not custom_srt_files:
+                return "❌ Error: Transcription produced no supported files to translate. Check the LIVE LOG for items that failed to produce output.", "", ""
+            return "❌ Error: No supported files found (srt, txt, csv, json, pdf, md)!", "", ""
     else:
         if not plain_text_input.strip(): return "❌ Error: Text field is empty!", "", ""
         files_to_translate = ["PLAIN_TEXT"]

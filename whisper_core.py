@@ -246,8 +246,14 @@ def run_transcription(
                     log_queue.put(f"❌ Audio extraction error: {e}\n")
 
             all_downloadable_files.extend(current_file_downloads)
-            srts = [f for f in current_file_downloads if f.endswith('.srt') and "_TRANSLATED_" not in f]
-            if srts: processed_srt_paths.append(srts[0])
+
+            # Collect translation-ready text/subtitle files produced for this item
+            trans_exts = ('.srt', '.txt')
+            item_trans_paths = [f for f in current_file_downloads if f.lower().endswith(trans_exts) and "_TRANSLATED_" not in f and "_PARTIAL" not in f]
+            if item_trans_paths:
+                processed_srt_paths.extend(item_trans_paths)
+            else:
+                log_queue.put(f"[ERROR] {base_name} produced no subtitle/text files\n")
             
             txt_files = [f for f in current_file_downloads if f.endswith('.txt')]
             if txt_files:
@@ -276,5 +282,18 @@ def run_transcription(
                     if os.path.exists(f): os.remove(f)
                 except: pass
 
-    paths_str = "|".join(processed_srt_paths)
-    return gr.update(value=all_clean_text), gr.update(value=all_downloadable_files if all_downloadable_files else []), final_status, paths_str, paths_str, global_out_dir
+    # Ensure unique, stable handoff list (preserve order, no duplicates)
+    seen_paths = []
+    for p in processed_srt_paths:
+        if p not in seen_paths:
+            seen_paths.append(p)
+    produced_text_paths = seen_paths
+
+    if produced_text_paths:
+        log_queue.put(f"[STAGE] Transcription produced {len(produced_text_paths)} file(s), handing off to translation\n")
+    else:
+        log_queue.put("[STAGE] Transcription produced 0 files, nothing to hand off to translation\n")
+
+    all_paths_str = "|".join(produced_text_paths)
+    last_path = produced_text_paths[-1] if produced_text_paths else ""
+    return gr.update(value=all_clean_text), gr.update(value=all_downloadable_files if all_downloadable_files else []), final_status, all_paths_str, last_path, global_out_dir
