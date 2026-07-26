@@ -15,7 +15,11 @@ from unittest.mock import patch, MagicMock
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from utils import canonical_media_url
-from whisper_core import _get_playlist_entries, _download_url_to_queue
+from whisper_core import (
+    _get_playlist_entries, _download_url_to_queue,
+    _is_radio_playlist, _is_google_drive_url, _extract_drive_file_id,
+)
+import whisper_core
 import utils
 
 
@@ -306,6 +310,99 @@ class DownloadUrlToQueueTests(unittest.TestCase):
 
             self.assertEqual(result, "")
             self.assertTrue(fake_process.terminated or fake_process.killed)
+
+
+class PlaylistExpansionPolicyTests(unittest.TestCase):
+    """Tests for BC5 playlist expansion policies (RD/UL rejection, cap, dedup)."""
+
+    @patch("whisper_core._get_playlist_entries")
+    def test_radio_playlist_rejected(self, mock_get_entries):
+        self.assertTrue(_is_radio_playlist("https://www.youtube.com/playlist?list=RDabc123"))
+        self.assertTrue(_is_radio_playlist("https://www.youtube.com/playlist?list=ULxyz789"))
+        self.assertFalse(_is_radio_playlist("https://www.youtube.com/playlist?list=PLabc123"))
+
+    @patch("whisper_core._get_playlist_entries")
+    def test_playlist_deduplicates_and_caps(self, mock_get_entries):
+        mock_get_entries.return_value = [
+            {"id": "abc", "url": "https://www.youtube.com/watch?v=abc", "title": "One"},
+            {"id": "abc", "url": "https://www.youtube.com/watch?v=abc", "title": "One again"},
+            {"id": "def", "url": "https://www.youtube.com/watch?v=def", "title": "Two"},
+        ]
+        entries = whisper_core.expand_playlist("https://www.youtube.com/playlist?list=PLtest")
+        self.assertEqual(len(entries), 2)
+        self.assertEqual(entries[0]["id"], "abc")
+        self.assertEqual(entries[1]["id"], "def")
+        self.assertEqual(entries[0]["playlist_index"], 1)
+        self.assertEqual(entries[1]["playlist_index"], 2)
+        self.assertEqual(entries[0]["url"], "https://www.youtube.com/watch?v=abc")
+
+    @patch("whisper_core._get_playlist_entries")
+    def test_playlist_fifty_item_cap(self, mock_get_entries):
+        many = [{"id": f"vid{i:03d}", "url": f"https://www.youtube.com/watch?v=vid{i:03d}", "title": f"Video {i}"} for i in range(1, 55)]
+        mock_get_entries.return_value = many
+        entries = whisper_core.expand_playlist("https://www.youtube.com/playlist?list=PLbig")
+        self.assertEqual(len(entries), 50)
+
+
+class GoogleDriveTests(unittest.TestCase):
+    """Tests for BC8 Google Drive link handling."""
+
+    def test_recognises_drive_links(self):
+        self.assertTrue(_is_google_drive_url("https://drive.google.com/file/d/ABC123/view"))
+        self.assertTrue(_is_google_drive_url("https://drive.google.com/file/d/ABC123"))
+        self.assertTrue(_is_google_drive_url("https://drive.google.com/open?id=XYZ789"))
+        self.assertFalse(_is_google_drive_url("https://www.youtube.com/watch?v=abc"))
+
+    def test_extracts_file_id(self):
+        self.assertEqual(_extract_drive_file_id("https://drive.google.com/file/d/ABC123/view"), "ABC123")
+        self.assertEqual(_extract_drive_file_id("https://drive.google.com/open?id=XYZ789"), "XYZ789")
+        self.assertEqual(_extract_drive_file_id("https://example.com/file"), "")
+
+
+class BatchResultsTests(unittest.TestCase):
+    """Tests for BC6 JOIN and ZIP helpers."""
+
+    @patch("batch_results.batch_queue")
+    def test_join_creates_files(self, mock_queue):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            src1 = os.path.join(tmpdir, "video1_TRANSLATED_EN.txt")
+            src2 = os.path.join(tmpdir, "video2_TRANSLATED_EN.txt")
+            with open(src1, "w", encoding="utf-8") as f:
+                f.write("Hello world")
+            with open(src2, "w", encoding="utf-8") as f:
+                f.write("Goodbye world")
+            mock_queue.get_batch_results.return_value = [
+                {"idx": 1, "name": "video1", "playlist_index": 1, "produced_files": [src1]},
+                {"idx": 2, "name": "video2", "playlist_index": 2, "produced_files": [src2]},
+            ]
+            from batch_results import join_batch_results
+            paths = join_batch_results(tmpdir, plain_text=False)
+            self.assertEqual(len(paths), 1)
+            self.assertTrue(paths[0].endswith("batch_JOINED_EN.txt"))
+            with open(paths[0], "r", encoding="utf-8") as f:
+                content = f.read()
+            self.assertIn("## 001 — video1", content)
+            self.assertIn("Hello world", content)
+            self.assertIn("## 002 — video2", content)
+            self.assertIn("Goodbye world", content)
+
+    @patch("batch_results.batch_queue")
+    def test_zip_creates_archive(self, mock_queue):
+        import tempfile
+        from batch_results import zip_batch_results
+        with tempfile.TemporaryDirectory() as tmpdir:
+            src = os.path.join(tmpdir, "result.txt")
+            with open(src, "w", encoding="utf-8") as f:
+                f.write("batch result")
+            mock_queue.get_batch_results.return_value = [
+                {"idx": 1, "name": "item", "playlist_index": None, "produced_files": [src]},
+            ]
+            zip_path = zip_batch_results(tmpdir)
+            self.assertTrue(os.path.isfile(zip_path))
+            import zipfile
+            with zipfile.ZipFile(zip_path, "r") as zf:
+                self.assertIn("result.txt", zf.namelist())
 
 
 if __name__ == "__main__":

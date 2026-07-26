@@ -38,6 +38,7 @@ class QueueItem:
     started_at: float = 0.0           # wall-clock when processing started
     finished_at: float = 0.0          # wall-clock when processing finished
     processed_seconds: float = 0.0    # how many media seconds *actually* processed
+    produced_files: List[str] = field(default_factory=list)  # output files produced for this item
 
 
 # ---------------------------------------------------------------------------
@@ -459,6 +460,28 @@ class QueueManager:
                     it.metadata["detected_language"] = lang
                     break
 
+    def add_produced_file(self, idx: int, path: str):
+        """Record a produced output file path for a queue item."""
+        with self._lock:
+            for it in self._items:
+                if it.idx == idx:
+                    if path and path not in it.produced_files:
+                        it.produced_files.append(path)
+                    break
+
+    def get_batch_results(self) -> List[Dict[str, Any]]:
+        """Return a list of {idx, name, playlist_index, produced_files} for all items."""
+        with self._lock:
+            return [
+                {
+                    "idx": it.idx,
+                    "name": it.name,
+                    "playlist_index": it.metadata.get("playlist_index"),
+                    "produced_files": list(it.produced_files),
+                }
+                for it in self._items
+            ]
+
     def get_detected_language(self, idx: int) -> str:
         """Return the detected source language for a queue item, or empty string."""
         with self._lock:
@@ -484,17 +507,35 @@ class QueueManager:
                     self._items.pop(i)
                     new_items = []
                     insert_pos = i
+                    seen_ids = set()
                     for entry in entries:
                         entry_url = entry.get("url", "")
+                        entry_id = entry.get("id") or entry_url
+                        # Skip duplicates within the playlist itself
+                        if entry_id in seen_ids:
+                            continue
+                        seen_ids.add(entry_id)
                         entry_title = entry.get("title", "") or entry_url
                         canonical = utils.canonical_media_url(entry_url)
+                        # Prefix name with playlist order for course-like batches
+                        playlist_index = entry.get("playlist_index")
+                        if playlist_index is not None:
+                            display_name = f"{playlist_index:03d}_{entry_title}"[:80]
+                        else:
+                            display_name = entry_title[:80]
+                        metadata = {
+                            "full_url": entry_url,
+                            "duration_known": False,
+                            "playlist_index": playlist_index,
+                            "playlist_title": entry.get("playlist_title", ""),
+                        }
                         item = QueueItem(
                             idx=self._next_idx,
                             source="url",
-                            name=entry_title[:80],
+                            name=display_name,
                             path_or_url=canonical,
                             duration=-1.0,
-                            metadata={"full_url": entry_url, "duration_known": False},
+                            metadata=metadata,
                         )
                         self._items.insert(insert_pos, item)
                         new_items.append(item)

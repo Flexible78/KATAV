@@ -29,6 +29,7 @@ from dialogs import (
 from file_operations import list_files, delete_selected, delete_all
 from whisper_core import run_transcription
 from srt_processor import export_to_json_dict
+from batch_results import join_batch_results, zip_batch_results
 
 from ai_translator import translate_content, check_api, fetch_models
 from queue_manager import batch_queue, format_duration
@@ -69,6 +70,18 @@ batch_current_name = ""
 batch_current_idx = 0
 
 
+def _is_playlist_url(url: str) -> bool:
+    return "/playlist?" in url and "list=" in url
+
+
+def _url_already_in_list(new_url: str, existing_urls: List[str]) -> bool:
+    new_canonical = utils.canonical_media_url(new_url).rstrip("/")
+    for eu in existing_urls:
+        if utils.canonical_media_url(eu).rstrip("/") == new_canonical:
+            return True
+    return False
+
+
 def append_url_to_input(current_urls: str, new_url: str):
     """Append a URL to the urls_input, deduplicating. Returns (updated_urls, new_url_field_value)."""
     new_url = (new_url or "").strip()
@@ -77,20 +90,15 @@ def append_url_to_input(current_urls: str, new_url: str):
     if not re.match(r'^https?://', new_url):
         gr.Warning(f"Invalid URL: {new_url[:80]}")
         return current_urls or "", new_url
-    # Normalise to a canonical media URL for stable deduplication
-    new_canonical = utils.canonical_media_url(new_url)
-    new_norm = new_canonical.rstrip("/")
     existing = (current_urls or "").strip()
     existing_urls = [u.strip() for u in existing.split('\n') if u.strip()]
-    # Check if already in list
-    for eu in existing_urls:
-        if utils.canonical_media_url(eu).rstrip("/") == new_norm:
-            gr.Info(f"Already in list: {new_url[:60]}")
-            return current_urls or "", ""
+    if _url_already_in_list(new_url, existing_urls):
+        gr.Info(f"Already in list: {new_url[:60]}")
+        return current_urls or "", ""
     # Check batch_queue (no I/O; pure in-memory lock lookup)
     all_items = batch_queue.get_items()
     for it in all_items:
-        if it.source == "url" and it.path_or_url.rstrip("/") == new_norm:
+        if it.source == "url" and it.path_or_url.rstrip("/") == utils.canonical_media_url(new_url).rstrip("/"):
             gr.Info(f"Already in queue: {new_url[:60]}")
             return current_urls or "", ""
 
@@ -106,6 +114,25 @@ def append_url_to_input(current_urls: str, new_url: str):
     if existing:
         return existing + "\n" + new_url, ""
     return new_url, ""
+
+
+def append_playlist_to_input(current_urls: str, playlist_url: str):
+    """Append a YouTube playlist URL after validation. Returns (updated_urls, new_url_field_value)."""
+    playlist_url = (playlist_url or "").strip()
+    if not playlist_url:
+        return current_urls or "", ""
+    if not _is_playlist_url(playlist_url):
+        gr.Warning("Please paste a YouTube playlist URL (contains /playlist?list=).")
+        return current_urls or "", playlist_url
+    existing = (current_urls or "").strip()
+    existing_urls = [u.strip() for u in existing.split('\n') if u.strip()]
+    if _url_already_in_list(playlist_url, existing_urls):
+        gr.Info("That playlist is already in the list.")
+        return current_urls or "", ""
+    utils.log_queue.put(f"[QUEUE] Playlist queued for expansion on start: {playlist_url[:120]}\n")
+    if existing:
+        return existing + "\n" + playlist_url, ""
+    return playlist_url, ""
 
 def get_model_choices(models_config):
     if isinstance(models_config, dict): return [v[0] for k, v in models_config.items()]
@@ -532,14 +559,21 @@ def build_app():
         hidden_srt_paths = gr.State("")
         hidden_dl_files = gr.State([]) 
         
-        gr.Markdown("<div class='micro-title'>🎙️ KATAV - Speech to Text + AI Translator</div>")
+        theme_state = gr.State(ui_state.get("katav_theme", "dark"))
+        with gr.Row():
+            gr.Markdown("<div class='micro-title'>🎙️ KATAV - Speech to Text + AI Translator</div>", scale=5)
+            theme_toggle_btn = gr.Button("🌓 Toggle Theme", variant="secondary", elem_classes=["fixed-height-btn"], scale=1, min_width=40)
+        _THEME_JS = "function(theme){var newTheme=theme==='dark'?'light':'dark';var body=document.body;if(newTheme==='light'){body.classList.add('katav-light');}else{body.classList.remove('katav-light');}try{localStorage.setItem('katav-theme',newTheme);}catch(e){}return newTheme;}"
+        _RESTORE_THEME_JS = "function(theme){var saved=theme;if(saved==='light'){document.body.classList.add('katav-light');}else{document.body.classList.remove('katav-light');}return saved;}"
+        theme_toggle_btn.click(fn=lambda t: (ui_state.save_settings({"katav_theme": t}), t)[1], js=_THEME_JS, inputs=[theme_state], outputs=[theme_state], queue=False)
         
         with gr.Row():
             # ==================== ЛЕВАЯ КОЛОНКА ====================
             with gr.Column(scale=5):
                 gr.Markdown("### 📁 MEDIA FILES")
                 
-                urls_input = gr.Textbox(                    label="🌐 URLS (YouTube, VK, TikTok) — one per line",
+                urls_input = gr.Textbox(
+                    label="🌐 URLS (YouTube, VK, TikTok, Google Drive) — one per line",
                     value=ui_state.get("whisper_urls", ""),
                     placeholder="https://youtube.com/watch?v=...",
                     lines=3
@@ -551,7 +585,14 @@ def build_app():
                         scale=5
                     )
                     add_url_btn = gr.Button("➕ ADD URL", variant="secondary", elem_classes=["fixed-height-btn"], scale=1, min_width=40)
+                    add_playlist_btn = gr.Button("➕ ADD PLAYLIST", variant="secondary", elem_classes=["fixed-height-btn"], scale=1, min_width=40)
                     paste_url_btn = gr.Button("📋 PASTE URL", variant="secondary", elem_classes=["fixed-height-btn"], scale=1, min_width=40)
+                with gr.Row(elem_classes=["uniform-row"]):
+                    new_playlist_input = gr.Textbox(
+                        label="➕ NEW PLAYLIST URL TO ADD",
+                        placeholder="Paste a YouTube playlist URL here and click ADD PLAYLIST",
+                        scale=5
+                    )
                 cookie_browser = gr.Dropdown(
                     choices=["None", "chrome", "edge", "firefox", "yandex"],
                     value=ui_state.get("whisper_cookie_browser", "None"),
@@ -881,6 +922,8 @@ def build_app():
 
         add_url_btn.click(fn=append_url_to_input, inputs=[urls_input, new_url_input], outputs=[urls_input, new_url_input])
         new_url_input.submit(fn=append_url_to_input, inputs=[urls_input, new_url_input], outputs=[urls_input, new_url_input])
+        add_playlist_btn.click(fn=append_playlist_to_input, inputs=[urls_input, new_playlist_input], outputs=[urls_input, new_playlist_input])
+        new_playlist_input.submit(fn=append_playlist_to_input, inputs=[urls_input, new_playlist_input], outputs=[urls_input, new_playlist_input])
         paste_url_btn.click(fn=paste_url_from_clipboard, inputs=[new_url_input], outputs=[new_url_input])
 
         paste_btn.click(fn=append_clipboard_to_queue, inputs=[manual_path], outputs=manual_path)
@@ -1009,9 +1052,55 @@ def build_app():
         shutdown_checkbox.change(fn=on_shutdown_toggle, inputs=[shutdown_checkbox], outputs=[cancel_shutdown_btn])
         cancel_shutdown_btn.click(fn=on_cancel_shutdown, outputs=[shutdown_checkbox, cancel_shutdown_btn])
 
+        # ── Batch results (BC6) ──
+        gr.Markdown("### 📦 BATCH RESULTS")
+        batch_results_status = gr.Textbox(label="BATCH RESULTS STATUS", lines=1, interactive=False, value="")
+        with gr.Row():
+            include_audio_checkbox = gr.Checkbox(label="Include audio (MP3)", value=False)
+        with gr.Row():
+            join_btn = gr.Button("📄 JOIN INTO ONE FILE", variant="secondary", elem_classes=["fixed-height-btn"])
+            zip_btn = gr.Button("🗜 ZIP RESULTS", variant="secondary", elem_classes=["fixed-height-btn"])
+        batch_download_file = gr.File(label="Download result", interactive=False)
+
+        def on_join_click(manual_path_val, use_custom, custom_dir, plain_text):
+            from utils import get_actual_output_dir
+            out_dir = get_actual_output_dir(manual_path_val, use_custom, custom_dir)
+            try:
+                paths = join_batch_results(out_dir, plain_text=plain_text)
+                if not paths:
+                    return gr.update(value=None), "No batch results to join."
+                return gr.update(value=paths[0] if len(paths) == 1 else paths), f"Joined {len(paths)} language file(s)."
+            except Exception as e:
+                return gr.update(value=None), f"❌ JOIN failed: {e}"
+
+        def on_zip_click(manual_path_val, use_custom, custom_dir, include_audio):
+            from utils import get_actual_output_dir
+            out_dir = get_actual_output_dir(manual_path_val, use_custom, custom_dir)
+            try:
+                zip_path = zip_batch_results(out_dir, include_audio=include_audio)
+                if not zip_path or not os.path.isfile(zip_path):
+                    return gr.update(value=None), "No batch results to zip."
+                return gr.update(value=zip_path), f"ZIP created: {os.path.basename(zip_path)}"
+            except Exception as e:
+                return gr.update(value=None), f"❌ ZIP failed: {e}"
+
+        join_btn.click(
+            fn=on_join_click,
+            inputs=[manual_path, use_custom_output, output_folder, plain_text_output],
+            outputs=[batch_download_file, batch_results_status]
+        )
+        zip_btn.click(
+            fn=on_zip_click,
+            inputs=[manual_path, use_custom_output, output_folder, include_audio_checkbox],
+            outputs=[batch_download_file, batch_results_status]
+        )
+
         eco_btn.click(
             fn=eco_preset,
             outputs=[model_size, compute_type, beam_size, condition_on_prev, use_vad_filter]
         )
+
+        # Restore theme class on page load
+        app.load(fn=lambda theme: theme, inputs=[theme_state], outputs=[theme_state], js=_RESTORE_THEME_JS)
 
     return app
