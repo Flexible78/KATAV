@@ -451,6 +451,31 @@ class QueueManager:
                         it.name = name
                     break
 
+    def set_detected_language(self, idx: int, lang: str):
+        """Store the detected source language for a queue item."""
+        with self._lock:
+            for it in self._items:
+                if it.idx == idx:
+                    it.metadata["detected_language"] = lang
+                    break
+
+    def get_detected_language(self, idx: int) -> str:
+        """Return the detected source language for a queue item, or empty string."""
+        with self._lock:
+            for it in self._items:
+                if it.idx == idx:
+                    return it.metadata.get("detected_language", "")
+        return ""
+
+    def find_item_by_path(self, path: str) -> Optional[QueueItem]:
+        """Find a queue item by its current local path."""
+        norm = os.path.normcase(os.path.abspath(path))
+        with self._lock:
+            for it in self._items:
+                if os.path.normcase(os.path.abspath(it.path_or_url)) == norm:
+                    return it
+        return None
+
     def replace_item_with_playlist_entries(self, idx: int, entries: List[Dict[str, Any]]) -> List[int]:
         """Replace a playlist queue item with individual video items, preserving order."""
         with self._lock:

@@ -428,6 +428,14 @@ def run_transcription(
                         batch_queue.update_current_file_eta(progress["remaining_seconds"])
                     except Exception:
                         pass
+                # Capture detected source language from lines like:
+                # Detected language 'ru': 99%
+                detected_match = re.search(r"Detected\s+language\s+['\"]([a-z]{2,3})['\"]", line, re.IGNORECASE)
+                if detected_match:
+                    try:
+                        batch_queue.set_detected_language(item_idx, detected_match.group(1).lower())
+                    except Exception:
+                        pass
         except Exception:
             pass
         finally:

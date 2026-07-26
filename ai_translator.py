@@ -11,7 +11,16 @@ from config import DEFAULT_OUTPUT_DIR, DEFAULT_SYSTEM_PROMPT, GEMMA_SYSTEM_PROMP
 from config import OMNIROUTE_BASE_URL, FREEWAY_BASE_URL, FREEWAY_DEFAULT_KEY, MISTRAL_BASE_URL
 from ui_manager import ui_state
 from srt_processor import chunk_text, sanitize_srt_text
+from queue_manager import batch_queue
 import json
+
+
+# Normalized language detection map shared across helpers.
+_LANG_DETECT_MAP = {
+    "Русский": {"ru", "rus", "russian"},
+    "English": {"en", "eng", "english"},
+    "עברית (Hebrew)": {"he", "heb", "hebrew"},
+}
 
 GEMINI_READY = False
 try:
@@ -34,6 +43,47 @@ except ImportError: pass
 # Module-level guard to prevent concurrent translate_content runs.
 _translate_lock = threading.Lock()
 _translate_running = False
+
+
+def lang_code(value: str) -> str:
+    """Normalize a language name/code to a two-letter code (ru/en/he) or 'auto'."""
+    if not value:
+        return "auto"
+    v = str(value).strip().lower()
+    if v == "auto":
+        return "auto"
+    if v in ("ru", "rus", "russian", "русский"):
+        return "ru"
+    if v in ("en", "eng", "english", "english"):
+        return "en"
+    if v in ("he", "heb", "hebrew", "עברית"):
+        return "he"
+    if v in ("р", "ру", "рussian"):
+        return "ru"
+    return v
+
+
+def _detect_source_language(fpath: str, base_name: str, source_language: str) -> str:
+    """Determine the source language code using setting, queue metadata, or filename."""
+    # 1. Explicit setting (when not auto)
+    if source_language and source_language.lower() != "auto":
+        return lang_code(source_language)
+
+    # 2. faster-whisper detected language stored in the queue item metadata
+    if fpath and fpath != "PLAIN_TEXT":
+        item = batch_queue.find_item_by_path(fpath)
+        if item is not None:
+            detected = batch_queue.get_detected_language(item.idx)
+            if detected:
+                return lang_code(detected)
+
+    # 3. Filename token matching
+    tokens = {t.lower() for t in re.split(r'[_\\-\\.\\s\\(\\)\\[\\]]+', base_name) if t}
+    for lang_name, markers in _LANG_DETECT_MAP.items():
+        if tokens & markers:
+            return lang_code(lang_name)
+
+    return "auto"
 
 
 def _ensure_singleton(func):
@@ -94,7 +144,7 @@ def translate_content(
     provider: str, current_api_key: str, target_langs: List[str], model_name: str,
     sys_prompt: str, custom_srt_files: List[Any], srt_local_path: str,
     hidden_actual_out_dir: str, hidden_srt_paths: str, translate_mode: str, plain_text_input: str,
-    force_all_langs: bool = False
+    force_all_langs: bool = False, source_language: str = "auto"
 ) -> Tuple[str, str, str]: # 🚀 Возвращаем три параметра!
     if getattr(utils, 'stop_requested', False):
         return "⚠️ Translation cancelled before start.", "", ""
@@ -274,6 +324,14 @@ def translate_content(
         c_list = chunk_text(orig_text, chunk_lim, by_paragraphs=not is_srt)
         file_chunks_map.append((fpath, orig_text, b_name, o_dir, c_list, is_srt))
 
+    # Determine source language per file and filter out targets matching it.
+    file_source_langs = {}
+    for fpath, orig_text, b_name, o_dir, c_list, is_srt in file_chunks_map:
+        src = _detect_source_language(fpath, b_name, source_language)
+        file_source_langs[fpath] = src
+        if src != "auto":
+            utils.log_queue.put(f"[TRANSLATE] Detected source language for {b_name}: {src}\n")
+
     # Total work units for the progress bar is chunk-based so the ETA is real
     total_chunks_all = sum(len(item[4]) for item in file_chunks_map) * max(len(target_langs), 1) if target_langs else 0
     processed_chunks = 0
@@ -292,7 +350,7 @@ def translate_content(
 
     def _matched_language_tokens(base_name: str, target_lang: str) -> List[str]:
         tokens = _tokenize_filename(base_name)
-        markers = _lang_detect_map.get(target_lang, set())
+        markers = _LANG_DETECT_MAP.get(target_lang, set())
         return [t for t in tokens if t in markers]
 
     for file_idx, (fpath, original_text, base_name, out_dir, chunks, is_srt) in enumerate(file_chunks_map):
@@ -311,7 +369,28 @@ def translate_content(
             saved_files.append(fpath) # Сохраняем оригинал
             continue
             
+        source_lang_code = file_source_langs.get(fpath, "auto")
+        effective_target_langs = []
         for target_lang in target_langs:
+            target_code = lang_code(target_lang)
+            if target_code == source_lang_code and not force_all_langs:
+                live_log(f"[SKIP] {base_name}: source language is already {source_lang_code}. Skipped, moving on.")
+                continue
+            if target_code == source_lang_code and force_all_langs:
+                live_log(f"[TRANSLATE] FORCE ALL LANGUAGES is on, same-language target kept.")
+            effective_target_langs.append(target_lang)
+
+        if not effective_target_langs:
+            live_log(f"[TRANSLATE] Nothing to translate: all targets match the source language.")
+            clean_text = original_text
+            if is_srt:
+                clean_text = re.sub(r'(?m)^\d+\s*\n\d{2}:\d{2}:\d{2}[,\.]\d{3}\s*-->\s*\d{2}:\d{2}:\d{2}[,\.]\d{3}\s*\n', '', clean_text)
+                clean_text = re.sub(r'\n\n+', '\n', clean_text).strip()
+            all_clean_editor_text += f"\n--- {base_name} (ORIGINAL) ---\n{clean_text}\n"
+            saved_files.append(fpath)
+            continue
+
+        for target_lang in effective_target_langs:
             if getattr(utils, 'stop_requested', False): break
 
             pair_key = (os.path.normcase(os.path.abspath(fpath)) if fpath != "PLAIN_TEXT" else fpath, target_lang)

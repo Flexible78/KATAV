@@ -944,7 +944,8 @@ def build_app():
             inputs=[
                 api_provider, api_key_input, target_languages, api_model, 
                 sys_prompt, custom_srt, srt_local_path, hidden_actual_out_dir, 
-                hidden_srt_paths, translate_mode, clean_text_output, force_all_langs
+                hidden_srt_paths, translate_mode, clean_text_output, force_all_langs,
+                language
             ], 
             outputs=[translate_status, clean_text_output, hidden_srt_paths]
         )
@@ -954,7 +955,8 @@ def build_app():
             inputs=[
                 api_provider, api_key_input, target_languages, api_model, 
                 sys_prompt, custom_srt, srt_local_path, hidden_actual_out_dir, 
-                hidden_srt_paths, translate_mode, clean_text_output, force_all_langs
+                hidden_srt_paths, translate_mode, clean_text_output, force_all_langs,
+                language
             ], 
             outputs=[translate_status, clean_text_output, hidden_srt_paths]
         )
