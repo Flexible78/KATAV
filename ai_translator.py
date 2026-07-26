@@ -179,7 +179,6 @@ def translate_content(
         return error_msg, "", ""
     
     file_chunks_map = []
-    total_requests = 0
         
     for fpath in files_to_translate:
         if fpath == "PLAIN_TEXT":
@@ -222,9 +221,10 @@ def translate_content(
             
         c_list = chunk_text(orig_text, chunk_lim, by_paragraphs=not is_srt)
         file_chunks_map.append((fpath, orig_text, b_name, o_dir, c_list, is_srt))
-        total_requests += len(c_list) * len(target_langs)
 
-    processed_requests = 0
+    # Total work units for the progress bar is chunk-based so the ETA is real
+    total_chunks_all = sum(len(item[4]) for item in file_chunks_map) * max(len(target_langs), 1) if target_langs else 0
+    processed_chunks = 0
     start_time = time.time()
     google_api_requests_this_minute = 0
     google_api_minute_start = time.time()
@@ -273,9 +273,15 @@ def translate_content(
                 all_clean_editor_text += f"\n--- {base_name} ({target_lang}) ---\n{clean_text}\n"
                 saved_files.append(fpath) # Сохраняем оригинал
                 continue
-            
+
             translated_blocks = []
             live_log(f"🌍 Translating to language: {target_lang}")
+
+            # Single-chunk clarity message
+            if len(chunks) == 1:
+                live_log(f"[TRANSLATE] Single chunk ({len(chunks[0])} blocks) - no split needed.")
+
+            lang_code = {"Русский": "RU", "English": "EN", "עברית (Hebrew)": "HE"}.get(target_lang, "TRANS")
             
             for idx, chunk in enumerate(chunks):
                 while getattr(utils, 'pause_requested', False) and not getattr(utils, 'stop_requested', False):
@@ -298,9 +304,9 @@ def translate_content(
                         google_api_requests_this_minute = 0
                         google_api_minute_start = time.time()
 
-                processed_requests += 1 
+                processed_chunks += 1 
                 e_sec = int(time.time() - start_time)
-                utils.log_queue.put(f"[PROGRESS_TRANS] | {processed_requests} | {total_requests} | {e_sec}\n")
+                utils.log_queue.put(f"[PROGRESS_TRANS] | {processed_chunks} | {total_chunks_all} | {e_sec} | {file_idx} | {len(file_chunks_map)} | {lang_code} | {idx} | {len(chunks)} | {base_name}\n")
                     
                 chunk_text_str = "\n\n".join(chunk)
                 user_prompt = f"Переведи этот текст на язык: {target_lang}. \n\nТЕКСТ:\n{chunk_text_str}"
@@ -398,7 +404,7 @@ def translate_content(
                         
                         if "429" in err_str or "too many requests" in err_str.lower() or "rate" in err_str.lower() or ("exhausted" in err_str.lower() and "quota" in err_str.lower()):
                             wait_secs = 60 
-                            live_log(f"   ⏳ API limit (429/Quota). Pausing {wait_secs} sec before retry...")
+                            live_log(f"[TRANSLATE] Paused {wait_secs}s by rate limit. ETA extended.")
                             logging.warning(f"[TRANSLATE] Rate limit / quota exhausted — pausing {wait_secs}s")
                             if utils.interruptible_sleep(wait_secs): break
                             continue  

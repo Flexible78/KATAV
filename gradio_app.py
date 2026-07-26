@@ -183,14 +183,22 @@ def process_logs(current_log: str):
                 audio_speed = f"{match_w.group(4)}x"
                 current_action = "Transcription"
 
-            # ── AI Translation progress ──
-            match_t = re.search(r'\[PROGRESS_TRANS\] \| (\d+) \| (\d+) \| (\d+)', line)
+            # ── AI Translation progress (K7: extended chunk info) ──
+            match_t = re.search(r'\[PROGRESS_TRANS\] \| (\d+) \| (\d+) \| (\d+)(?: \| (\d+) \| (\d+) \| (\w+) \| (\d+) \| (\d+) \| (.+))?', line)
             if match_t:
                 req_done = int(match_t.group(1))
                 req_total = int(match_t.group(2))
                 e_sec = int(match_t.group(3))
-                
-                current_action = f"AI Translation ({req_done}/{req_total})"
+                rich = match_t.group(4)
+                if rich and match_t.group(9):
+                    file_idx = int(match_t.group(4)) + 1
+                    total_files = int(match_t.group(5))
+                    lang_code = match_t.group(6)
+                    chunk_idx = int(match_t.group(7)) + 1
+                    total_chunks = int(match_t.group(8))
+                    current_action = f"AI TRANSLATION (file {file_idx}/{total_files} | {lang_code} | chunk {chunk_idx}/{total_chunks})"
+                else:
+                    current_action = f"AI TRANSLATION ({req_done}/{req_total})"
                 current_percent = int((req_done / req_total) * 100) if req_total > 0 else 100
                 time_elapsed = f"{e_sec//60:02d}:{e_sec%60:02d}"
                 r_sec = int((e_sec / req_done) * (req_total - req_done)) if req_done > 0 else 0
