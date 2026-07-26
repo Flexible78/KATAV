@@ -49,7 +49,8 @@ def _save_last_model(provider: str, model_name: str) -> None:
 def translate_content(
     provider: str, current_api_key: str, target_langs: List[str], model_name: str,
     sys_prompt: str, custom_srt_files: List[Any], srt_local_path: str,
-    hidden_actual_out_dir: str, hidden_srt_paths: str, translate_mode: str, plain_text_input: str
+    hidden_actual_out_dir: str, hidden_srt_paths: str, translate_mode: str, plain_text_input: str,
+    force_all_langs: bool = False
 ) -> Tuple[str, str, str]: # 🚀 Возвращаем три параметра!
     
     if getattr(utils, 'stop_requested', False):
@@ -229,10 +230,18 @@ def translate_content(
     google_api_minute_start = time.time()
 
     _lang_detect_map = {
-        "Русский": ["ru", "рус", "russian", "_ru"],
-        "English": ["en", "eng", "english", "_en"],
-        "עברית (Hebrew)": ["he", "heb", "hebrew", "_he"]
+        "Русский": {"ru", "rus", "russian"},
+        "English": {"en", "eng", "english"},
+        "עברית (Hebrew)": {"he", "heb", "hebrew"},
     }
+
+    def _tokenize_filename(base_name: str):
+        return {t.lower() for t in re.split(r'[_\\-\\.\\s\\(\\)\\[\\]]+', base_name) if t}
+
+    def _matched_language_tokens(base_name: str, target_lang: str) -> List[str]:
+        tokens = _tokenize_filename(base_name)
+        markers = _lang_detect_map.get(target_lang, set())
+        return [t for t in tokens if t in markers]
 
     for file_idx, (fpath, original_text, base_name, out_dir, chunks, is_srt) in enumerate(file_chunks_map):
         if getattr(utils, 'stop_requested', False): break
@@ -253,10 +262,10 @@ def translate_content(
         for target_lang in target_langs:
             if getattr(utils, 'stop_requested', False): break
             
-            lang_markers = _lang_detect_map.get(target_lang, [])
-            base_lower = base_name.lower()
-            if any(marker in base_lower for marker in lang_markers):
-                live_log(f"⏭ Skipping: file '{base_name}' is already in '{target_lang}'. Outputting to editor.")
+            matched_tokens = _matched_language_tokens(base_name, target_lang)
+            if matched_tokens and not force_all_langs:
+                token_str = matched_tokens[0]
+                live_log(f"[SKIP] {target_lang} skipped: filename token '{token_str.upper()}' indicates it is already {target_lang}. Use the FORCE ALL LANGUAGES checkbox to override.")
                 clean_text = original_text
                 if is_srt:
                     clean_text = re.sub(r'(?m)^\d+\s*\n\d{2}:\d{2}:\d{2}[,\.]\d{3}\s*-->\s*\d{2}:\d{2}:\d{2}[,\.]\d{3}\s*\n', '', clean_text)
@@ -440,7 +449,14 @@ def translate_content(
     if not getattr(utils, 'stop_requested', False):
         live_log("\n✅ ENTIRE BATCH TRANSLATED!")
         utils.log_queue.put(f"[PROGRESS_FILE] | {len(file_chunks_map)} | {len(file_chunks_map)}\n")
-        
+        # Log [RESULT] lines for every translated file written
+        for sf in saved_files:
+            if "_TRANSLATED_" in sf:
+                match = re.search(r'_TRANSLATED_([A-Z]{2,3})', os.path.basename(sf))
+                if match:
+                    lang_code = match.group(1)
+                    live_log(f"[RESULT] {lang_code} -> {sf}")
+
     status_msg = f"{'⚠️ Interrupted. Partial progress saved' if getattr(utils, 'stop_requested', False) else '✅ Completed'}: {len(saved_files)} files." 
     # 🚀 Возвращаем ТРИ переменные (третья - список путей к SRT через |)
     return status_msg, all_clean_editor_text, "|".join(saved_files)

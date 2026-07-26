@@ -600,6 +600,7 @@ def build_app():
                         translate_mode = gr.Radio(choices=["Files", "Text (from Editor)"], value="Files", label="MODE")
                         
                     target_languages = gr.CheckboxGroup(choices=["Русский", "English", "עברית (Hebrew)"], value=ui_state.get("trans_langs", ["Русский"]), label="TARGET LANGUAGES")
+                    force_all_langs = gr.Checkbox(label="FORCE ALL LANGUAGES (ignore filename hints)", value=False)
                     
                     init_key = ""
                     if api_provider_val == "OpenRouter": init_key = saved_keys.get("openrouter", "")
@@ -901,7 +902,7 @@ def build_app():
             inputs=[
                 api_provider, api_key_input, target_languages, api_model, 
                 sys_prompt, custom_srt, srt_local_path, hidden_actual_out_dir, 
-                hidden_srt_paths, translate_mode, clean_text_output
+                hidden_srt_paths, translate_mode, clean_text_output, force_all_langs
             ], 
             outputs=[translate_status, clean_text_output, hidden_srt_paths]
         )
@@ -911,7 +912,7 @@ def build_app():
             inputs=[
                 api_provider, api_key_input, target_languages, api_model, 
                 sys_prompt, custom_srt, srt_local_path, hidden_actual_out_dir, 
-                hidden_srt_paths, translate_mode, clean_text_output
+                hidden_srt_paths, translate_mode, clean_text_output, force_all_langs
             ], 
             outputs=[translate_status, clean_text_output, hidden_srt_paths]
         )
