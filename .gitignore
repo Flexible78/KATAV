@@ -23,6 +23,7 @@ hf_cache/
 *.log
 *.tmp
 *.bak
+.katav_pids
 
 # Repomix / generated reports
 repomix*.xml

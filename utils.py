@@ -129,11 +129,80 @@ def restart_app():
 
 def kill_program():
     global current_process
+    import subprocess as _subprocess
+    import time as _time
+
+    # 1. Terminate the current transcription/translation process cleanly.
     if current_process:
-        try: current_process.terminate()
-        except: pass
+        try:
+            current_process.terminate()
+        except Exception:
+            pass
+        try:
+            current_process.wait(timeout=3)
+        except Exception:
+            try:
+                current_process.kill()
+            except Exception:
+                pass
+
+    own_pid = os.getpid()
+    pid_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".katav_pids")
+    pids_to_kill = []
+
+    # 2. Read recorded PIDs and filter out own PID.
+    if os.path.exists(pid_file):
+        try:
+            with open(pid_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    pid_str = line.strip()
+                    if pid_str and pid_str.isdigit():
+                        pid = int(pid_str)
+                        if pid != own_pid:
+                            pids_to_kill.append(pid)
+        except Exception:
+            pass
+
+    # 3. Fallback: find the process listening on port 8080.
+    if not pids_to_kill and os.name == 'nt':
+        try:
+            result = _subprocess.run(
+                ["powershell", "-NoProfile", "-Command",
+                 "(Get-NetTCPConnection -LocalPort 8080 -ErrorAction SilentlyContinue).OwningProcess"],
+                capture_output=True, text=True, timeout=5,
+                creationflags=0x08000000,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                for pid_str in result.stdout.strip().splitlines():
+                    pid_str = pid_str.strip()
+                    if pid_str and pid_str.isdigit():
+                        pid = int(pid_str)
+                        if pid != own_pid:
+                            pids_to_kill.append(pid)
+        except Exception:
+            pass
+
+    # 4. Kill recorded/fallback PIDs.
     if os.name == 'nt':
-        os.system("taskkill /F /IM python.exe /T")
+        for pid in pids_to_kill:
+            try:
+                _subprocess.run(
+                    ["taskkill", "/PID", str(pid), "/T", "/F"],
+                    capture_output=True, text=True, timeout=5,
+                    creationflags=0x08000000,
+                )
+            except Exception:
+                pass
+
+    # 5. Delete PID file.
+    try:
+        if os.path.exists(pid_file):
+            os.remove(pid_file)
+    except Exception:
+        pass
+
+    # 6. Log and exit.
+    log_queue.put(f"[EXIT] Terminating {len(pids_to_kill)} child process(es)...\n")
     os._exit(0)
 
 def process_logs(current_log: str) -> Tuple[str, str]:
