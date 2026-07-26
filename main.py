@@ -1,6 +1,10 @@
 import os
 import sys
 import logging
+import warnings
+
+# Silence the google.generativeai deprecation notice without hiding other warnings.
+warnings.filterwarnings("ignore", category=FutureWarning, module="google.generativeai")
 
 # Проверяем наличие необходимых библиотек AI
 try:

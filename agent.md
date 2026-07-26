@@ -708,7 +708,32 @@ Batch of fixes for translation duplication, queue lifecycle, honest ETA, single 
 - Full transcription + translation end-to-end smoke test (requires Faster-Whisper-XXL and API keys).
 - Pushed to `origin/main`; full bundle backup created at `..\\KATAV_full_backup.bundle`.
 
+## 2026-07-26 — BB1-BB3 hotfix (model: Kimi K2.7)
+- **BB1** — `ai_translator.py`: removed two local assignments that shadowed the module-level `lang_code` helper inside `translate_content`. The shadowing caused `UnboundLocalError` and prevented EN/HE translations from starting.
+- **BB2** — `start.bat`, `utils.py`: fixed EXIT so it closes both console windows. `start.bat` now writes `.katav_pids` in ASCII, uses `cmd /c` so consoles close automatically, and records both `cmd.exe` and child `python.exe` PIDs. `kill_program` now reads the PID file in binary (tolerant of UTF-16LE/UTF-8/ANSI), falls back to ports 8080 and 7861 with parent `cmd.exe` resolution, kills by window title as a last resort, and logs `[EXIT] killed pids: ... | by title: ...` before exit.
+- **BB3** — `main.py`: added a targeted `warnings.filterwarnings("ignore", category=FutureWarning, module="google.generativeai")` so the deprecation notice does not clutter logs. Migration to `google.genai` is recorded as tech debt.
+
+### Verification
+- AST check: all `.py` files parse without syntax errors — `AST OK`.
+- `ai_translator.py` AST shadow check: `SHADOWS: []`.
+- `lang_code` helper returns `ru en he` for the three supported languages.
+
+### Commits
+- `b0b01e9` fix(translate): stop shadowing the lang_code helper inside translate_content
+- `3a0effc` fix(exit): close both console hosts and record PIDs in a readable encoding
+- `e608ba2` chore(deps): silence the google.generativeai deprecation notice and record the migration debt
+
+### What was not done
+- GUI runtime verification (requires manual owner testing with real media).
+- Migration from `google.generativeai` to `google.genai` — this is a separate task; only the Google Gemini provider is affected, and the current provider code is intentionally left unchanged to avoid introducing new failures.
+
 ### Risks
+- The `cmd /c` change means launcher windows close automatically when Python exits; users must rely on `app.log` and the LIVE LOG for diagnostic messages.
+- Title-based fallback uses `taskkill /F /T /FI "WINDOWTITLE eq KATAV*"`, which could affect other windows with matching titles if any exist.
+
+### Tech debt
+- Migrate the Google Gemini provider from `google.generativeai` to `google.genai`. This is a standalone provider-only change and should be tackled separately to limit regression risk.
+
 - The 70/30 progress split assumes every full-cycle run passes through both phases. A standalone translation run is detected and falls back to 0-100% translation-only progress.
 - Same-language skip relies on the `LANGUAGE` setting or detected-language metadata; if both are `auto` and filename tokens are ambiguous, the skip may not trigger.
 - Queue lifecycle hooks are now in `whisper_core.py`; any future direct callers of the transcription function that do not use the queue path will bypass progress updates.
