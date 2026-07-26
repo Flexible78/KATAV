@@ -72,11 +72,8 @@ batch_current_name = ""
 batch_current_idx = 0
 
 
-# ---------------------------------------------------------------------------
-# Theme helpers
-# ---------------------------------------------------------------------------
-_THEME_JS = """function(theme){var newTheme=theme==='dark'?'light':'dark';var body=document.body;if(newTheme==='light'){body.classList.add('katav-light');}else{body.classList.remove('katav-light');}try{localStorage.setItem('katav-theme',newTheme);}catch(e){}return newTheme;}"""
-_RESTORE_THEME_JS = """function(theme){var saved=theme;if(saved==='light'){document.body.classList.add('katav-light');}else{document.body.classList.remove('katav-light');}return saved;}"""
+# Theme CSS variables (dark + light) are in config.py custom_css.
+# Theme toggle removed: Gradio 6 JS click handler not verifiable without browser.
 
 
 def _is_playlist_url(url: str) -> bool:
@@ -566,17 +563,15 @@ def append_clipboard_to_queue(current_path: str) -> str:
 def build_app():
     saved_keys = load_keys_safe()
     
-    with gr.Blocks(title="KATAV - Speech to Text", css=custom_css) as app:
+    with gr.Blocks(title="KATAV - Speech to Text") as app:
         hidden_base_name = gr.State("") 
         hidden_actual_out_dir = gr.State("") 
         hidden_srt_paths = gr.State("")
         hidden_dl_files = gr.State([]) 
         
-        theme_state = gr.State(ui_state.get("katav_theme", "dark"))
+        theme_state = gr.State("dark")
         with gr.Row():
             gr.Markdown("<div class='micro-title'>🎙️ KATAV - Speech to Text + AI Translator</div>", scale=5)
-            theme_toggle_btn = gr.Button("◐", elem_id="theme_btn", variant="secondary", scale=0, min_width=36)
-        theme_toggle_btn.click(fn=lambda t: (ui_state.save_settings({"katav_theme": t}), t)[1], js=_THEME_JS, inputs=[theme_state], outputs=[theme_state], queue=False)
         
         with gr.Row():
             # ==================== ЛЕВАЯ КОЛОНКА ====================
@@ -596,9 +591,10 @@ def build_app():
                             scale=5
                         )
                     with gr.Row(elem_classes=["uniform-row"]):
-                        add_url_btn = gr.Button("+ URL", variant="secondary", elem_classes=["fixed-height-btn"], scale=1, min_width=40)
-                        add_playlist_btn = gr.Button("+ PLAYLIST", variant="secondary", elem_classes=["fixed-height-btn"], scale=1, min_width=40)
-                        paste_url_btn = gr.Button("PASTE", variant="secondary", elem_classes=["fixed-height-btn"], scale=1, min_width=40)
+                        add_url_btn = gr.Button("+ URL", variant="secondary", elem_classes=["service-btn"], scale=1, min_width=40)
+                        add_playlist_btn = gr.Button("+ PLAYLIST", variant="secondary", elem_classes=["service-btn"], scale=1, min_width=40)
+                        paste_url_btn = gr.Button("PASTE", variant="secondary", elem_classes=["service-btn"], scale=1, min_width=40, title="Paste URL from clipboard into the NEW URL field")
+                        clear_media_btn = gr.Button("CLEAR", variant="secondary", elem_classes=["service-btn"], scale=1, min_width=40, title="Clear all sources and URL fields")
                     
                     with gr.Row(elem_classes=["uniform-row"]):
                         manual_path = gr.Textbox(
@@ -607,8 +603,7 @@ def build_app():
                             scale=5
                         )
                     with gr.Row(elem_classes=["uniform-row"]):
-                        clear_media_btn = gr.Button("CLEAR", variant="secondary", elem_classes=["fixed-height-btn"], scale=1, min_width=40)
-                        paste_btn = gr.Button("PASTE", variant="secondary", elem_classes=["fixed-height-btn"], scale=1, min_width=40)
+                        paste_btn = gr.Button("PASTE", variant="secondary", elem_classes=["fixed-height-btn"], scale=1, min_width=40, title="Paste file/folder paths from clipboard")
                         file_btn = gr.Button("FILE", variant="secondary", elem_classes=["fixed-height-btn"], scale=1, min_width=40)
                         folder_batch_btn = gr.Button("DIR", variant="secondary", elem_classes=["fixed-height-btn"], scale=1, min_width=40)
                     
@@ -797,6 +792,11 @@ def build_app():
                 timer.tick(fn=process_logs, inputs=[output_log], outputs=[output_log, metrics_panel, batch_results_group])
                 
                 clear_media_btn.click(
+                    fn=lambda: ("", "", None, ""),
+                    inputs=[],
+                    outputs=[urls_input, manual_path, input_file, new_url_input]
+                )
+                clear_media_btn_lower.click(
                     fn=lambda: ("", "", None, ""),
                     inputs=[],
                     outputs=[urls_input, manual_path, input_file, new_url_input]
@@ -1107,7 +1107,7 @@ def build_app():
             outputs=[model_size, compute_type, beam_size, condition_on_prev, use_vad_filter]
         )
 
-        # Restore theme class on page load
-        app.load(fn=lambda theme: theme, inputs=[theme_state], outputs=[theme_state], js=_RESTORE_THEME_JS)
+        # Restore theme class on page load (theme toggle removed, this is a no-op kept for compatibility)
+        app.load(fn=lambda theme: theme, inputs=[theme_state], outputs=[theme_state])
 
     return app

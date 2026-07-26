@@ -164,7 +164,36 @@ body, .gradio-container {
     font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif !important;
     max-width: 98% !important;
     padding: 10px !important;
+    padding-top: 3px !important;
     transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* Single CSS class for all service buttons (CLEAR, + URL, + PLAYLIST, etc.) */
+.service-btn {
+    height: 44px !important;
+    font-size: 10px !important;
+    line-height: 1.1 !important;
+    white-space: normal !important;
+    text-align: center !important;
+    padding: 2px 6px !important;
+    border-radius: 8px !important;
+    border: 1px solid var(--katav-accent) !important;
+    background: linear-gradient(180deg, #7c2d12 0%, #9a3412 100%) !important;
+    color: #fff !important;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.15), 0 2px 4px rgba(0,0,0,0.4) !important;
+    text-transform: uppercase;
+    font-weight: 600 !important;
+    transition: all 0.2s ease !important;
+}
+.service-btn:hover {
+    background: linear-gradient(180deg, #9a3412 0%, #c2410c 100%) !important;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.25), 0 4px 8px rgba(0,0,0,0.5) !important;
+    transform: translateY(-1px);
+}
+body.katav-light .service-btn {
+    background: linear-gradient(180deg, #ddd6fe 0%, #c4b5fd 100%) !important;
+    color: #4c1d95 !important;
+    border-color: #8b5cf6 !important;
 }
 .gap-4 { gap: 8px !important; }
 .p-4 { padding: 12px !important; }
