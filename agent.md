@@ -563,3 +563,68 @@ When in doubt:
 * keep responsibilities explicit
 
 * favor maintainability over cleverness
+
+---
+
+## Snapshot 2026-07-26 — E1-E6 Batch Enhancement
+
+### Implemented features:
+- **E1 (Durations & ETA):** Added batch duration, current file duration, elapsed, and dynamic ETA to progress panel. Uses ffprobe for file durations and yt-dlp for URL metadata. 4-cell metric grid with HH:MM:SS/MM:SS formatting. ETA computes from measured processing speed.
+- **E2 (Safe Shutdown):** Checkbox "Shut down Windows after batch completes" with 60-second cancellable countdown via `shutdown /s /t 60` and `shutdown /a`. No /f flag. Only triggers on completed batch with at least one success.
+- **E3 (Appendable URL Queue):** Multi-line URL input. ADD URL button normalizes, validates, and deduplicates. File/URL badges in queue panel (blue/purple). URLs and files interleave in insertion order.
+- **E4 (Selective Removal):** Per-item status display (Queued/Running/Done/Failed). Running items cannot be removed. Completed/failed items remain in history without deleting output files.
+- **E5 (Settings Snapshot):** prepare_start snapshots all Whisper settings at batch start. Each queued item stores its own snapshot for future per-item application.
+- **E6 (UI Design):** Refined dark-themed progress panel: overall percentage + bar + completed/total, 4-cell metric row (Elapsed/ETA/Speed/Batch Dur), current-file section with name+duration+bar, queue section with File/URL badges, status colors, truncated names with tooltips.
+
+### New files:
+- **queue_manager.py** — QueueManager singleton with QueueItem dataclass, duration extraction (ffprobe/yt-dlp), thread-safe ETA calculation, settings snapshots, shutdown scheduling.
+- **test_queue.py** — 25 non-GUI tests verifying: queue append order, duplicate rejection, selective removal with duration recalculation, ETA calculation with zero-duration guard, snapshot semantics isolation, shutdown eligibility.
+
+### Modified files:
+- **gradio_app.py** — prepare_start now builds queue in batch_queue with settings snapshots; process_logs parses [BATCH_STATUS] lines and renders enhanced metrics panel; added shutdown checkbox, cancel button, multi-line URL input, ADD URL button.
+- **whisper_core.py** — Unchanged (queue integration via process_logs synchronizing [PROGRESS_FILE] lines with batch_queue).
+
+### Important semantics:
+- Settings apply to next queued item, not the item already running (snapshotted at prepare_start).
+- Shutdown: 60-second cancellable countdown, no /f, requires >=1 success, skips on cancel.
+- ETA: excludes items with unknown duration (URLs before metadata). Tooltip explains this.
+- batch_queue bridges UI (gradio_app) and processing (whisper_core) via shared global singleton.
+
+### Tests:
+- 25/25 non-GUI tests passed (test_queue.py).
+- AST check: all .py files parse without syntax errors.
+- git diff --check: clean (no whitespace errors).
+
+### Git log:
+- Branch: release-clean
+- Previous commits: c79c8d2, 3851684, be7cd01, 2600d2b
+- New (unstaged): gradio_app.py (+300/-60), queue_manager.py (new), test_queue.py (new)
+
+### ⚠️ Nothing was pushed. Owner GUI verification required for:
+- Duration display accuracy with real media files
+- ETA convergence during actual batch processing
+- Shutdown trigger/cancel behavior on real Windows
+- URL add-to-queue during running batch
+
+---
+
+## 2026-07-26 - KATAV fixes K1-K10
+- K1 startup: add_file ran a 15s ffprobe per file and add_url ran yt_dlp.extract_info with no
+  timeout, both inside prepare_start before any log line. Probes are now non-blocking and the
+  startup stages are timestamped.
+- K2 ETA: BATCH DUR renamed TOTAL AUDIO; single-item batches hide the batch row; ETA now
+  derives from measured throughput.
+- K3 exit: replaced taskkill /IM python.exe with per-PID taskkill /T /F using .katav_pids;
+  os._exit is now the last statement.
+- K4 full cycle: transcription now hands its produced paths to the translation stage.
+- K5 languages: the skip test was a substring match, so "he" inside a filename silently
+  skipped Hebrew. Replaced with strict token matching plus FORCE ALL LANGUAGES.
+- K6 output: added unique_path; results are never overwritten.
+- K7 translate progress: per-chunk [PROGRESS_TRANS] and a real ETA.
+- K8 URLs: ADD URL now logs and enqueues, the field clears, and a clipboard PASTE was added
+  using a new read_clipboard_text that does not filter through os.path.exists.
+- K9 yt-dlp: noplaylist added after a radio playlist caused a different video id to be
+  downloaded; cookie support and ANSI stripping added.
+- K10 brand: renamed to KATAV across UI, launcher and dialogs.
+- Commits: b637872, 7ac4b58, 531eb37, 99df2ed, fc6f24c, a36e53d, fdacf8c, 51de1b0, 5bcea68, brand commit.
+- Nothing was pushed.

@@ -101,27 +101,27 @@ root.attributes('-topmost', True)
         return ""
 
 def open_folder_dialog() -> str:
-    return _run_tk_dialog('print(filedialog.askdirectory(title="Выберите папку на диске"))')
+    return _run_tk_dialog('print(filedialog.askdirectory(title="Select a folder"))')
 
 def open_files_batch_dialog() -> str:
     code = '''
-res = filedialog.askopenfilenames(title="Выберите медиафайлы", filetypes=[("Media Files", "*.mp4 *.mkv *.avi *.mp3 *.wav *.m4a *.flac *.ogg"), ("All Files", "*.*")])
+res = filedialog.askopenfilenames(title="Select media files", filetypes=[("Media Files", "*.mp4 *.mkv *.avi *.mp3 *.wav *.m4a *.flac *.ogg"), ("All Files", "*.*")])
 print(" | ".join(res) if res else "")
 '''
     return _run_tk_dialog(code)
 
 def open_dir_batch_dialog() -> str:
-    return _run_tk_dialog('print(filedialog.askdirectory(title="Выберите папку с медиафайлами"))')
+    return _run_tk_dialog('print(filedialog.askdirectory(title="Select media folder"))')
 
 def open_srt_batch_dialog() -> str:
     code = '''
-res = filedialog.askopenfilenames(title="Выберите текстовые/srt файлы", filetypes=[("Text/Subtitles", "*.srt *.txt *.csv *.json *.pdf *.md"), ("All Files", "*.*")])
+res = filedialog.askopenfilenames(title="Select text/SRT files", filetypes=[("Text/Subtitles", "*.srt *.txt *.csv *.json *.pdf *.md"), ("All Files", "*.*")])
 print(" | ".join(res) if res else "")
 '''
     return _run_tk_dialog(code)
 
 def open_dir_srt_dialog() -> str:
-    return _run_tk_dialog('print(filedialog.askdirectory(title="Выберите папку с текстовыми/srt файлами"))')
+    return _run_tk_dialog('print(filedialog.askdirectory(title="Select text/SRT folder"))')
 
 def save_edited_text_dialog(text: str, base_name: str, actual_out_dir: str, save_format: str = "txt") -> str:
     if not text or not text.strip(): 
@@ -187,7 +187,7 @@ def save_edited_text_dialog(text: str, base_name: str, actual_out_dir: str, save
     code = f'''
 import os, shutil
 from tkinter import filedialog
-res = filedialog.asksaveasfilename(title="Сохранить текст...", initialdir="{initial_dir}", initialfile="{default_filename}", defaultextension=".{ext}", filetypes=[{ft}])
+res = filedialog.asksaveasfilename(title="Save text as...", initialdir="{initial_dir}", initialfile="{default_filename}", defaultextension=".{ext}", filetypes=[{ft}])
 if res:
     shutil.copy2("{temp_path}", res)
     print(res)
@@ -251,7 +251,7 @@ def save_srt_dialog(file_paths: str, actual_out_dir: str) -> str:
     code = f'''
 import os, shutil
 from tkinter import filedialog
-res = filedialog.asksaveasfilename(title="Сохранить SRT файл как...", initialdir="{initial_dir}", initialfile="{b_name}.srt", defaultextension=".srt", filetypes=[("Subtitles", "*.srt"), ("All files", "*.*")])
+res = filedialog.asksaveasfilename(title="Save SRT file as...", initialdir="{initial_dir}", initialfile="{b_name}.srt", defaultextension=".srt", filetypes=[("Subtitles", "*.srt"), ("All files", "*.*")])
 if res:
     shutil.copy2(r"{path}", res)
     print(res)

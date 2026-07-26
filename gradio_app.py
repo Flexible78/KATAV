@@ -486,13 +486,13 @@ def append_clipboard_to_queue(current_path: str) -> str:
 def build_app():
     saved_keys = load_keys_safe()
     
-    with gr.Blocks(title="AT Whisper ULTIMATE") as app:
+    with gr.Blocks(title="KATAV - Speech to Text") as app:
         hidden_base_name = gr.State("") 
         hidden_actual_out_dir = gr.State("") 
         hidden_srt_paths = gr.State("")
         hidden_dl_files = gr.State([]) 
         
-        gr.Markdown("<div class='micro-title'>🎙️ AT Whisper ULTIMATE + AI Translator</div>")
+        gr.Markdown("<div class='micro-title'>🎙️ KATAV - Speech to Text + AI Translator</div>")
         
         with gr.Row():
             # ==================== ЛЕВАЯ КОЛОНКА ====================
@@ -530,7 +530,7 @@ def build_app():
                     folder_batch_btn = gr.Button("📂 DIR", variant="secondary", elem_classes=["fixed-height-btn"], scale=1, min_width=40)
                 
                 input_file = gr.File(
-                    label="OR DRAG & DROP FILES HERE", 
+                    label="Drop files here", 
                     file_types=["audio", "video"], 
                     file_count="multiple"
                 )
@@ -662,7 +662,7 @@ def build_app():
                                     copy_srt_btn = gr.Button("📋 COPY SRT", variant="primary", elem_classes=["fixed-height-btn"])
                                     save_srt_btn = gr.Button("💾 SAVE SRT AS...", variant="primary", elem_classes=["fixed-height-btn"])
                         
-                    custom_srt = gr.File(label="OR DRAG & DROP FILES HERE", file_types=[".srt", ".txt", ".csv", ".json", ".pdf", ".md"], file_count="multiple")
+                    custom_srt = gr.File(label="Drop files here", file_types=[".srt", ".txt", ".csv", ".json", ".pdf", ".md"], file_count="multiple")
                     
                     with gr.Row():
                         translate_btn = gr.Button("🪄 TRANSLATE", variant="secondary", elem_classes=["fixed-height-btn"])
