@@ -2,6 +2,7 @@ import os
 import subprocess
 import threading
 import re
+import time
 from pathlib import Path
 from typing import List, Tuple, Any
 import gradio as gr
@@ -128,6 +129,9 @@ def run_transcription(
     all_downloadable_files = []
     all_clean_text = ""
     processed_srt_paths = [] 
+
+    utils.log_queue.put(f"[STAGE] Loading Whisper model {model_size} ({compute_type})...\n")
+    utils.model_load_start_time = time.time()
 
     # Build process creationflags once (Windows priority)
     creationflags = 0

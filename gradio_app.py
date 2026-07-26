@@ -3,6 +3,7 @@ import webbrowser
 import os
 import re
 import json
+import time
 import subprocess
 import sys
 from typing import List, Any
@@ -29,6 +30,7 @@ from whisper_core import run_transcription
 from srt_processor import export_to_json_dict
 
 from ai_translator import translate_content, check_api, fetch_models
+from queue_manager import batch_queue, format_duration
 import utils 
 
 GROQ_MODELS = [
@@ -70,11 +72,76 @@ def get_model_choices(models_config):
         return models_config
     return []
 
-def prepare_start():
+def prepare_start(
+    manual_path_val: str, urls_val: str, input_files_val: List[Any],
+    language_val: str, model_size_val: str, compute_type_val: str,
+    output_formats_val: List[str], save_audio_track_val: bool,
+    use_vad_filter_val: bool, vad_method_val: str, initial_prompt_val: str,
+    hotwords_val: str, temperature_val: float, rep_penalty_val: float,
+    beam_size_val: float, patience_val: float, condition_on_prev_val: bool,
+    no_speech_thresh_val: float, use_sentence_val: bool, use_print_progress_val: bool,
+    use_beep_off_val: bool, use_custom_output_val: bool, output_dir_val: str
+):
     global batch_items, batch_total, batch_completed, batch_failed, batch_current_name, batch_current_idx
     utils.stop_requested = False
     batch_items = []; batch_total = 0; batch_completed = 0; batch_failed = 0
     batch_current_name = ""; batch_current_idx = 0
+
+    # ── Build queue in QueueManager ──
+    utils.log_queue.put("[STAGE] Building queue...\n")
+    batch_queue.reset()
+
+    # Add local files from manual_path
+    mp = (manual_path_val or "").strip()
+    if mp:
+        paths = [p.strip().strip('"').strip("'") for p in mp.split('|') if p.strip()]
+        for p in paths:
+            if os.path.isdir(p):
+                for f in os.listdir(p):
+                    if f.lower().endswith(('.mp4', '.mkv', '.avi', '.mp3', '.wav', '.m4a', '.flac', '.ogg')):
+                        batch_queue.add_file(os.path.join(p, f))
+            elif os.path.isfile(p):
+                batch_queue.add_file(p)
+
+    # Add drag-drop files
+    if input_files_val:
+        for f in input_files_val:
+            fpath = f.name if hasattr(f, 'name') else str(f)
+            if os.path.isfile(fpath):
+                batch_queue.add_file(fpath)
+
+    # Add URLs
+    urls = (urls_val or "").strip()
+    if urls:
+        for url in urls.split('\n'):
+            url = url.strip()
+            if not url:
+                continue
+            if not re.match(r'^https?://', url):
+                continue
+            item = batch_queue.add_url(url)
+            if item is None:
+                gr.Info(f"Already in queue or invalid: {url[:50]}")
+
+    # Trigger background duration probing and stage logging
+    batch_queue.start_duration_probing()
+
+    # Snapshot current settings for all queued items
+    settings_snap = {
+        "language": language_val, "model_size": model_size_val, "compute_type": compute_type_val,
+        "output_formats": output_formats_val, "save_audio_track": save_audio_track_val,
+        "use_vad_filter": use_vad_filter_val, "vad_method": vad_method_val,
+        "initial_prompt": initial_prompt_val, "hotwords": hotwords_val,
+        "temperature": temperature_val, "rep_penalty": rep_penalty_val,
+        "beam_size": beam_size_val, "patience": patience_val,
+        "condition_on_prev": condition_on_prev_val, "no_speech_thresh": no_speech_thresh_val,
+        "use_sentence": use_sentence_val, "use_print_progress": use_print_progress_val,
+        "use_beep_off": use_beep_off_val, "use_custom_output": use_custom_output_val,
+        "output_dir": output_dir_val,
+    }
+    for qi in batch_queue.get_items():
+        batch_queue.set_settings_snapshot(qi.idx, settings_snap)
+
     return gr.update(elem_classes=["status-running"])
 
 def eco_preset():
@@ -101,15 +168,22 @@ def process_logs(current_log: str):
     try:
         while not log_queue.empty():
             line = log_queue.get()
-            
+
+            # ── Whisper progress ──
             match_w = re.search(r'(\d+)%\s*\|\s*\d+/\d+\s*\|\s*(\d{2}:\d{2})<<?(\d{2}:\d{2})\s*\|\s*([\d.]+)', line)
             if match_w:
+                if utils.model_load_start_time > 0:
+                    load_elapsed = time.time() - utils.model_load_start_time
+                    utils.log_queue.put(f"[STAGE] Model ready in {load_elapsed:.1f}s\n")
+                    utils.log_queue.put("[STAGE] Transcription started\n")
+                    utils.model_load_start_time = 0.0
                 current_percent = int(match_w.group(1))
                 time_elapsed = match_w.group(2)
                 time_remaining = match_w.group(3)
                 audio_speed = f"{match_w.group(4)}x"
                 current_action = "Transcription"
-                
+
+            # ── AI Translation progress ──
             match_t = re.search(r'\[PROGRESS_TRANS\] \| (\d+) \| (\d+) \| (\d+)', line)
             if match_t:
                 req_done = int(match_t.group(1))
@@ -122,6 +196,39 @@ def process_logs(current_log: str):
                 r_sec = int((e_sec / req_done) * (req_total - req_done)) if req_done > 0 else 0
                 time_remaining = f"{r_sec//60:02d}:{r_sec%60:02d}"
                 audio_speed = "API"
+                continue
+
+            # ── Batch status from queue manager ──
+            match_bs = re.search(r'\[BATCH_STATUS\] \| (.+)', line)
+            if match_bs:
+                parts = match_bs.group(1).split(' | ')
+                if len(parts) >= 11:
+                    batch_total = int(parts[0])
+                    batch_completed = int(parts[1])
+                    batch_failed = int(parts[2])
+                    # overall_pct = parts[3]
+                    time_elapsed = parts[4]
+                    time_remaining = parts[5]
+                    # batch_dur = parts[6]
+                    # file_progress = parts[7]
+                    # current_name = parts[8]; current_dur = parts[9]; current_source = parts[10]
+                    current_action = "Transcription"
+                    if batch_total > 0:
+                        bg_items = batch_queue.get_items()
+                        batch_items.clear()
+                        for qi in bg_items:
+                            batch_items.append({
+                                'idx': qi.idx, 'name': qi.name, 'status': qi.status,
+                                'total': batch_total, 'error': qi.error,
+                                'source': qi.source, 'duration': qi.duration
+                            })
+                        running = batch_queue.get_running_item()
+                        if running:
+                            batch_current_name = running.name
+                            batch_current_idx = running.idx
+                            current_file_action = f"{running.source.upper()} ({running.idx}/{batch_total})"
+                            if running.duration > 0:
+                                current_file_percent = int((running.processed_seconds / running.duration) * 100) if running.duration > 0 else 0
                 continue
 
             match_f = re.search(r'\[PROGRESS_FILE\] \| (\d+) \| (\d+) \| (.+?) \| (\w+)(?: \| (.+))?', line)
@@ -158,66 +265,94 @@ def process_logs(current_log: str):
         lines = new_text.split('\n')
         if len(lines) > 15: new_text = '\n'.join(lines[-15:])
 
+    # Update batch_queue from [PROGRESS_FILE] lines for live progress tracking
+    running_item = batch_queue.get_running_item()
+    if running_item and batch_items:
+        for bi in batch_items:
+            qi = batch_queue.get_item(bi['idx'])
+            if qi:
+                if bi['status'] == 'running' and qi.status != 'running':
+                    batch_queue.mark_item_running(qi.idx)
+                elif bi['status'] == 'done' and qi.status == 'running':
+                    batch_queue.mark_item_done(qi.idx)
+                elif bi['status'] == 'failed' and qi.status == 'running':
+                    batch_queue.mark_item_failed(qi.idx, bi.get('error', ''))
+
     file_progress_html = ""
     if current_file_action:
+        running = batch_queue.get_running_item()
+        cur_file_dur = format_duration(running.duration) if (running and running.duration > 0) else "??:??"
         file_progress_html = f"""
-        <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid #3f3f46;">
-            <div style="display: flex; justify-content: space-between; margin-bottom: 5px; font-weight: bold; font-size: 13px; color: #a1a1aa; text-transform: uppercase;">
-                <span>{current_file_action}</span><span style="color: #3b82f6;">{current_file_percent}%</span>
+        <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #3f3f46;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                <span style="font-weight: 700; font-size: 12px; color: #f4f4f5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 70%;" title="{running.name if running else ''}">{running.name if running else current_file_action}</span>
+                <span style="font-size: 10px; color: #a1a1aa; white-space: nowrap;">{current_file_action} | Dur: {cur_file_dur}</span>
             </div>
-            <div style="width: 100%; background-color: #18181b; border-radius: 4px; overflow: hidden; height: 12px; border: 1px solid #27272a;">
-                <div style="width: {current_file_percent}%; height: 100%; background: linear-gradient(90deg, #1d4ed8, #3b82f6); transition: width 0.3s ease;"></div>
+            <div style="width: 100%; background-color: #18181b; border-radius: 4px; overflow: hidden; height: 8px; border: 1px solid #27272a;">
+                <div style="width: {current_file_percent}%; height: 100%; background: linear-gradient(90deg, #2563eb, #3b82f6); transition: width 0.3s ease;"></div>
             </div>
         </div>
         """
 
-    # Build batch status panel HTML
+    # Build enhanced queue panel (E4: selective removal, E3: File/URL badges)
     batch_panel_html = ""
-    if batch_items:
-        sorted_items = sorted(batch_items, key=lambda x: x['idx'])
-        running = [i for i in sorted_items if i['status'] == 'running']
-        done = [i for i in sorted_items if i['status'] == 'done']
-        failed = [i for i in sorted_items if i['status'] == 'failed']
-        queued = [i for i in sorted_items if i['status'] == 'queued']
-        
+    bg_items = batch_queue.get_items()
+    if bg_items:
         parts = []
-        if running:
-            r = running[0]
-            overall_pct = int(((batch_completed + batch_failed) / max(batch_total, 1)) * 100)
-            parts.append(f"""<div style="margin-top:10px;padding:10px 12px;background:rgba(234,88,12,0.06);border:1px solid rgba(234,88,12,0.2);border-radius:8px;">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;">
-            <span style="font-weight:700;font-size:13px;color:#f4f4f5;">{r['name']}</span>
-            <span style="font-size:10px;color:#ea580c;font-weight:700;text-transform:uppercase;">RUNNING</span></div>
-            <div style="width:100%;background:#18181b;border-radius:3px;height:5px;border:1px solid #27272a;"><div style="width:{current_percent}%;height:100%;background:linear-gradient(90deg,#ea580c,#f97316);border-radius:3px;transition:width 0.3s;"></div></div>
-            <div style="display:flex;justify-content:space-between;margin-top:5px;font-size:10px;color:#71717a;">
-            <span>Batch: {batch_completed + batch_failed}/{batch_total} ({overall_pct}%)</span><span>File: {current_percent}%</span></div></div>""")
-        if done:
-            dn = " · ".join([i['name'] for i in done[:6]])
-            if len(done) > 6: dn += f" +{len(done)-6}"
-            parts.append(f'<div style="margin-top:5px;font-size:11px;color:#10b981;">✅ Done ({len(done)}): <span style="color:#a1a1aa;">{dn}</span></div>')
-        if failed:
-            fn = " · ".join([i['name'] for i in failed])
-            parts.append(f'<div style="margin-top:4px;font-size:11px;color:#e11d48;">❌ Failed ({len(failed)}): <span style="color:#f87171;">{fn}</span></div>')
-        if queued:
-            qn = " · ".join([i['name'] for i in queued[:5]])
-            if len(queued) > 5: qn += f" +{len(queued)-5}"
-            parts.append(f'<div style="margin-top:4px;font-size:11px;color:#52525b;">⏳ Queued ({len(queued)}): <span style="color:#71717a;">{qn}</span></div>')
-        batch_panel_html = '<div style="margin-top:10px;padding-top:10px;border-top:1px solid #3f3f46;">' + ''.join(parts) + '</div>'
+        for it in bg_items:
+            status_colors = {"queued": "#52525b", "running": "#f97316", "done": "#10b981", "failed": "#e11d48"}
+            sc = status_colors.get(it.status, "#52525b")
+            badge_color = "#3b82f6" if it.source == "file" else "#8b5cf6"
+            dur_str = format_duration(it.duration) if it.duration > 0 else "--:--"
+            name_trunc = (it.name[:60] + "...") if len(it.name) > 63 else it.name
+            parts.append(f"""<div style="display:flex;align-items:center;justify-content:space-between;padding:3px 6px;margin:2px 0;border-radius:4px;background:rgba(24,24,27,0.6);font-size:11px;">
+            <span style="display:flex;align-items:center;gap:6px;flex:1;min-width:0;">
+            <span style="background:{badge_color};color:#fff;padding:1px 5px;border-radius:3px;font-size:9px;font-weight:700;text-transform:uppercase;white-space:nowrap;">{it.source}</span>
+            <span style="color:#d4d4d8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{it.name}">{name_trunc}</span>
+            </span>
+            <span style="display:flex;align-items:center;gap:6px;white-space:nowrap;">
+            <span style="color:#71717a;">{dur_str}</span>
+            <span style="color:{sc};font-weight:700;font-size:9px;text-transform:uppercase;">{it.status}</span>
+            </span></div>""")
+        batch_panel_html = '<div style="margin-top:6px;padding-top:6px;border-top:1px solid #3f3f46;max-height:180px;overflow-y:auto;">' + ''.join(parts) + '</div>'
+
+    # ── Shutdown status banner ──
+    sd = batch_queue.get_shutdown_status()
+    shutdown_html = ""
+    if sd["scheduled"]:
+        shutdown_html = '<div style="margin-top:8px;padding:8px;background:rgba(234,88,12,0.1);border:1px solid #ea580c;border-radius:6px;text-align:center;"><span style="color:#f97316;font-weight:700;">⏱ Batch complete. Windows will shut down in 60 seconds.</span></div>'
+    elif sd["cancelled"]:
+        shutdown_html = '<div style="margin-top:8px;padding:8px;background:rgba(16,185,129,0.1);border:1px solid #10b981;border-radius:6px;text-align:center;"><span style="color:#10b981;">Shutdown cancelled.</span></div>'
+
+    # ── Metrics panel (E1: durations and ETA, E6: refined layout) ──
+    batch_total_dur = batch_queue.get_total_media_seconds()
+    batch_dur_display = format_duration(batch_total_dur) if batch_total_dur > 0 else "Calculating…"
+    eta = batch_queue.calculate_eta()
+    eta_display = format_duration(eta) if eta >= 0 else "Calculating…"
+    elapsed_display = batch_queue.get_elapsed_str()
+    # Use queue manager time_elapsed if available, else fallback
+    if batch_queue.get_running_item():
+        time_elapsed = elapsed_display
+
+    overall_pct = int(((batch_completed + batch_failed) / max(batch_total, 1)) * 100) if batch_total > 0 else current_percent
 
     metrics_html = f"""
-    <div style="background: rgba(30, 30, 32, 0.9); padding: 15px; border-radius: 12px; border: 1px solid #52525b; margin-bottom: 10px; box-shadow: inset 0 2px 10px rgba(0,0,0,0.5);">
-        <div style="display: flex; justify-content: space-between; margin-bottom: 8px; font-weight: bold; font-size: 16px; color: #f4f4f5; text-transform: uppercase; letter-spacing: 0.5px;">
-            <span>{current_action}</span><span style="color: #ea580c;">{current_percent}%</span>
+    <div style="background: rgba(30, 30, 32, 0.9); padding: 12px; border-radius: 10px; border: 1px solid #52525b; margin-bottom: 8px;">
+        <div style="display: flex; justify-content: space-between; margin-bottom: 6px; font-weight: bold; font-size: 14px; color: #f4f4f5; text-transform: uppercase;">
+            <span>{current_action}</span>
+            <span style="color: #ea580c;">{overall_pct}%</span>
+            <span style="font-size:10px;color:#71717a;font-weight:normal;">{batch_completed + batch_failed}/{max(batch_total,1)}</span>
         </div>
-        <div style="width: 100%; background-color: #18181b; border-radius: 8px; overflow: hidden; height: 24px; border: 1px solid #27272a;">
-            <div style="width: {current_percent}%; height: 100%; background: linear-gradient(90deg, #9a3412, #ea580c); box-shadow: inset 0 1px 2px rgba(255,255,255,0.2); transition: width 0.3s ease;"></div>
+        <div style="width: 100%; background-color: #18181b; border-radius: 6px; overflow: hidden; height: 18px; border: 1px solid #27272a;">
+            <div style="width: {overall_pct}%; height: 100%; background: linear-gradient(90deg, #9a3412, #ea580c); transition: width 0.3s ease;"></div>
         </div>
-        <div style="display: flex; justify-content: space-between; margin-top: 10px; color: #a1a1aa; font-family: 'Courier New', Courier, monospace; font-size: 14px; font-weight: bold;">
-            <span>⏱ Elapsed: <span style="color:#d4d4d8;">{time_elapsed}</span></span>
-            <span>⏳ Left: <span style="color:#f87171;">{time_remaining}</span></span>
-            <span>⚡ Speed: <span style="color:#34d399;">{audio_speed}</span></span>
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 6px; margin-top: 8px;">
+            <div style="text-align:center;"><div style="font-size:9px;color:#71717a;text-transform:uppercase;">Elapsed</div><div style="color:#d4d4d8;font-family:monospace;font-size:13px;font-weight:700;">{time_elapsed}</div></div>
+            <div style="text-align:center;"><div style="font-size:9px;color:#71717a;text-transform:uppercase;">ETA</div><div style="color:#f87171;font-family:monospace;font-size:13px;font-weight:700;">{eta_display}</div></div>
+            <div style="text-align:center;"><div style="font-size:9px;color:#71717a;text-transform:uppercase;">Speed</div><div style="color:#34d399;font-family:monospace;font-size:13px;font-weight:700;">{audio_speed}</div></div>
+            <div style="text-align:center;"><div style="font-size:9px;color:#71717a;text-transform:uppercase;" title="ETA excludes items whose duration is not known yet.">Batch Dur</div><div style="color:#a78bfa;font-family:monospace;font-size:13px;font-weight:700;">{batch_dur_display}</div></div>
         </div>
-        {file_progress_html}{batch_panel_html}
+        {file_progress_html}{batch_panel_html}{shutdown_html}
     </div>
     """
     return new_text, metrics_html
@@ -338,12 +473,18 @@ def build_app():
             with gr.Column(scale=5):
                 gr.Markdown("### 📁 MEDIA FILES")
                 
-                urls_input = gr.Textbox(
-                    label="🌐 URLS (YouTube, VK, TikTok)", 
+                urls_input = gr.Textbox(                    label="🌐 URLS (YouTube, VK, TikTok) — one per line",
                     value=ui_state.get("whisper_urls", ""),
                     placeholder="https://youtube.com/watch?v=...",
-                    lines=1
+                    lines=3
                 )
+                with gr.Row(elem_classes=["uniform-row"]):
+                    new_url_input = gr.Textbox(
+                        label="➕ NEW URL TO ADD",
+                        placeholder="Paste a single URL here and click ADD",
+                        scale=5
+                    )
+                    add_url_btn = gr.Button("➕ ADD URL", variant="secondary", elem_classes=["fixed-height-btn"], scale=1, min_width=40)
                 
                 with gr.Row(elem_classes=["uniform-row"]):
                     manual_path = gr.Textbox(
@@ -411,8 +552,13 @@ def build_app():
                     start_full_btn = gr.Button("🔥 FULL CYCLE (SUBS+TRANS)", variant="primary", elem_id="start_full_btn", elem_classes=["fixed-height-btn"])
                     pause_btn = gr.Button("⏸ PAUSE", variant="secondary", elem_classes=["fixed-height-btn"])
                     stop_btn = gr.Button("🛑 STOP", variant="stop", elem_id="stop_btn", elem_classes=["fixed-height-btn"])
+                with gr.Row():
                     restart_btn = gr.Button("🔄 RELOAD UI", variant="secondary", elem_classes=["fixed-height-btn"], min_width=40)
                     exit_btn = gr.Button("🚪 EXIT", variant="secondary", elem_id="exit_btn", elem_classes=["fixed-height-btn"], min_width=40)
+
+                with gr.Row():
+                    shutdown_checkbox = gr.Checkbox(label="🔌 Shut down Windows after batch completes", value=False, elem_id="shutdown_cb")
+                    cancel_shutdown_btn = gr.Button("❌ Cancel shutdown", variant="stop", elem_classes=["fixed-height-btn"], visible=False, min_width=40)
                 
                 with gr.Accordion("🗑️ CLEAN OUTPUT DIRECTORY", open=False):
                     with gr.Row(elem_classes=["file-manager"]):
@@ -512,9 +658,9 @@ def build_app():
                 timer.tick(fn=process_logs, inputs=[output_log], outputs=[output_log, metrics_panel])
                 
                 clear_media_btn.click(
-                    fn=lambda: ("", "", None),
+                    fn=lambda: ("", "", None, ""),
                     inputs=[],
-                    outputs=[urls_input, manual_path, input_file]
+                    outputs=[urls_input, manual_path, input_file, new_url_input]
                 )
 
                 clear_trans_files_btn.click(
@@ -642,6 +788,36 @@ def build_app():
             outputs=[api_model]
         )
         
+        def append_url_to_input(current_urls: str, new_url: str) -> str:
+            """Append a URL to the urls_input, deduplicating."""
+            new_url = (new_url or "").strip()
+            if not new_url:
+                return current_urls or ""
+            if not re.match(r'^https?://', new_url):
+                gr.Warning(f"Invalid URL: {new_url[:80]}")
+                return current_urls or ""
+            # Normalize: remove trailing slash
+            new_norm = new_url.rstrip("/")
+            existing = (current_urls or "").strip()
+            existing_urls = [u.strip().rstrip("/") for u in existing.split('\n') if u.strip()]
+            # Check if already in list
+            for eu in existing_urls:
+                if eu == new_norm:
+                    gr.Info(f"Already in list: {new_url[:60]}")
+                    return current_urls or ""
+            # Check batch_queue
+            all_items = batch_queue.get_items()
+            for it in all_items:
+                if it.source == "url" and it.path_or_url.rstrip("/") == new_norm:
+                    gr.Info(f"Already in queue: {new_url[:60]}")
+                    return current_urls or ""
+            # Append
+            if existing:
+                return existing + "\n" + new_url
+            return new_url
+
+        add_url_btn.click(fn=append_url_to_input, inputs=[urls_input, new_url_input], outputs=[urls_input])
+
         paste_btn.click(fn=append_clipboard_to_queue, inputs=[manual_path], outputs=manual_path)
         srt_paste_btn.click(fn=read_clipboard_paths, outputs=srt_local_path)
         file_btn.click(fn=append_files_to_queue, inputs=[manual_path], outputs=manual_path)
@@ -676,19 +852,31 @@ def build_app():
             use_custom_output, output_folder, output_formats, save_audio_track
         ]
 
+        # ── All settings for snapshot ──
+        all_settings_inputs = [
+            manual_path, urls_input, input_file,
+            language, model_size, compute_type,
+            output_formats, save_audio_track,
+            use_vad_filter, vad_method, initial_prompt,
+            hotwords, temperature, rep_penalty,
+            beam_size, patience, condition_on_prev,
+            no_speech_thresh, use_sentence, use_print_progress,
+            use_beep_off, use_custom_output, output_folder
+        ]
+
         check_api_btn.click(
             fn=check_api,
             inputs=[api_provider, api_key_input, api_model],
             outputs=[translate_status]
         )
 
-        start_btn.click(fn=prepare_start, outputs=log_box).then(
+        start_btn.click(fn=prepare_start, inputs=all_settings_inputs, outputs=log_box).then(
             fn=run_transcription,
             inputs=whisper_inputs,
             outputs=[clean_text_output, hidden_dl_files, log_box, hidden_srt_paths, srt_local_path, hidden_actual_out_dir] 
         )
 
-        start_full_btn.click(fn=prepare_start, outputs=log_box).then(
+        start_full_btn.click(fn=prepare_start, inputs=all_settings_inputs, outputs=log_box).then(
             fn=run_transcription,
             inputs=whisper_inputs,
             outputs=[clean_text_output, hidden_dl_files, log_box, hidden_srt_paths, srt_local_path, hidden_actual_out_dir] 
@@ -704,7 +892,7 @@ def build_app():
             outputs=[translate_status, clean_text_output, hidden_srt_paths]
         )
         
-        translate_btn.click(fn=prepare_start, outputs=log_box).then(
+        translate_btn.click(fn=prepare_start, inputs=all_settings_inputs, outputs=log_box).then(
             fn=translate_content, 
             inputs=[
                 api_provider, api_key_input, target_languages, api_model, 
@@ -727,6 +915,22 @@ def build_app():
         stop_btn.click(fn=stop_all_processes, outputs=[log_box], queue=False)
         restart_btn.click(fn=restart_app, js="function(){ setTimeout(() => location.reload(), 2000); }", queue=False)
         exit_btn.click(fn=kill_program, queue=False)
+
+        # ── Shutdown controls (E2) ──
+        def on_shutdown_toggle(checked: bool):
+            if checked:
+                batch_queue.enable_shutdown()
+            else:
+                batch_queue.disable_shutdown()
+            return gr.update(visible=checked)
+
+        def on_cancel_shutdown():
+            msg = batch_queue.cancel_shutdown()
+            gr.Info(msg)
+            return gr.update(value=False), gr.update(visible=False)
+
+        shutdown_checkbox.change(fn=on_shutdown_toggle, inputs=[shutdown_checkbox], outputs=[cancel_shutdown_btn])
+        cancel_shutdown_btn.click(fn=on_cancel_shutdown, outputs=[shutdown_checkbox, cancel_shutdown_btn])
 
         eco_btn.click(
             fn=eco_preset,

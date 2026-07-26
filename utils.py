@@ -42,6 +42,7 @@ time_remaining = "00:00"
 audio_speed = "0.00x"
 GEMINI_READY = False
 OPENAI_READY = False
+model_load_start_time = 0.0
 
 # ==============================================================================
 # УТИЛИТЫ И КЛЮЧИ
