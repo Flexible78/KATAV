@@ -64,7 +64,7 @@ CONFIG_FILE = "whisper_api_keys.json"
 SETTINGS_FILE = "whisper_settings.json"
 
 # ==============================================================================
-# 3. ПРОМПТЫ НЕЙРОСЕТЕЙ (ЗАЩИТА ОТ ГАЛЛЮЦИНАЦИЙ)
+# 3. SYSTEM PROMPTS (ANTI-HALLUCINATION GUARDRAILS)
 # ==============================================================================
 DEFAULT_SYSTEM_PROMPT = (
     "You are a professional subtitle translator. Your only task is to translate the provided text into the requested language.\n\n"

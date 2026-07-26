@@ -36,7 +36,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
-        logging.FileHandler("whisper_app.log", encoding="utf-8", mode="a"), # append mode
+        logging.FileHandler("app.log", encoding="utf-8", mode="a"), # append mode
         logging.StreamHandler(sys.stdout)
     ]
 )

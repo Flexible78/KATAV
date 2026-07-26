@@ -17,11 +17,29 @@ from config import CONFIG_FILE, DEFAULT_OUTPUT_DIR
 # ==============================================================================
 # 1. ЛОГГИРОВАНИЕ И ИНИЦИАЛИЗАЦИЯ
 # ==============================================================================
+_LOG_FILE = "app.log"
+_MAX_LOG_BYTES = 5 * 1024 * 1024  # 5 MB
+_OLD_LOG_FILE = "app.log.1"
+
+def _rotate_log():
+    """Rename app.log → app.log.1 if it exceeds 5 MB."""
+    try:
+        log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), _LOG_FILE)
+        if os.path.isfile(log_path) and os.path.getsize(log_path) > _MAX_LOG_BYTES:
+            old_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), _OLD_LOG_FILE)
+            if os.path.isfile(old_path):
+                os.remove(old_path)
+            os.rename(log_path, old_path)
+    except Exception:
+        pass
+
+_rotate_log()
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
-        logging.FileHandler("whisper_app.log", encoding="utf-8", mode="w"),
+        logging.FileHandler(_LOG_FILE, encoding="utf-8", mode="a"),
         logging.StreamHandler(sys.stdout)
     ]
 )

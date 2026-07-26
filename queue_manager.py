@@ -31,7 +31,7 @@ class QueueItem:
     source: str                       # 'file' or 'url'
     name: str                         # display name (filename or short URL)
     path_or_url: str                  # full filesystem path or URL
-    status: str = "queued"            # queued | running | done | failed
+    status: str = "queued"            # queued | running | done | failed | skipped
     duration: float = -1.0            # media seconds; -1 = unknown
     error: str = ""                   # error message if failed
     metadata: Dict[str, Any] = field(default_factory=dict)  # extra metadata
@@ -423,6 +423,29 @@ class QueueManager:
                     it.error = error
                     it.finished_at = time.time()
                     break
+
+    def mark_item_skipped(self, idx: int, reason: str = ""):
+        with self._lock:
+            for it in self._items:
+                if it.idx == idx:
+                    it.status = "skipped"
+                    it.error = reason
+                    break
+
+    def get_skipped_count(self) -> int:
+        with self._lock:
+            return sum(1 for it in self._items if it.status == "skipped")
+
+    def retry_failed(self) -> int:
+        """Reset failed items back to queued. Returns count."""
+        with self._lock:
+            count = 0
+            for it in self._items:
+                if it.status == "failed":
+                    it.status = "queued"
+                    it.error = ""
+                    count += 1
+            return count
 
     def update_item_progress(self, idx: int, percent: float):
         """Update running item's processed_seconds based on progress percent."""

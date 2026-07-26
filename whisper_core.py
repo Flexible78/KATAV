@@ -388,7 +388,9 @@ def run_transcription(
     condition_on_prev: bool, no_speech_thresh: float, use_sentence: bool,
     use_print_progress: bool, use_vad_filter: bool, use_beep_off: bool,
     use_custom_output: bool, output_dir: str, output_formats: List[str], save_audio_track: bool,
-    plain_text_output: bool = False
+    plain_text_output: bool = False,
+    skip_done: bool = True, use_study_deck: bool = False,
+    study_min_count: float = 2, study_max_terms: float = 300
 ) -> Tuple[gr.update, gr.update, gr.update, str, str, str]:
     global process_active, current_process, current_percent, time_elapsed, time_remaining, audio_speed, full_whisper_log, stop_requested, current_action
     
@@ -595,6 +597,20 @@ def run_transcription(
             base_name = os.path.splitext(os.path.basename(video_path))[0]
             log_queue.put(f"\n🚜 [BATCH {idx+1}/{len(files_to_process)}] Processing: {base_name}\n")
 
+            # ── BD8: SKIP DONE logic ──
+            if skip_done and output_formats:
+                current_out_dir_skip = output_dir.strip() if (use_custom_output and output_dir.strip()) else os.path.dirname(os.path.abspath(video_path))
+                expected = any(
+                    os.path.isfile(os.path.join(current_out_dir_skip, f"{base_name}.{ext}"))
+                    for ext in output_formats
+                )
+                if expected:
+                    log_queue.put(f"[SKIP] output exists: {base_name}\n")
+                    if current_queue_item:
+                        batch_queue.mark_item_skipped(current_queue_item.idx, "Output already exists")
+                    log_queue.put(f"[PROGRESS_FILE] | {current_queue_item.idx if current_queue_item else idx+1} | {total_files} | {base_name} | skipped\n")
+                    continue
+
             current_queue_item = _find_queue_item(video_path)
             if current_queue_item is not None:
                 batch_queue.mark_item_running(current_queue_item.idx)
@@ -682,6 +698,43 @@ def run_transcription(
                             log_queue.put(f"[CLEAN] {os.path.basename(clean_path)}\n")
                         except Exception as e:
                             log_queue.put(f"️ Could not create clean text for {produced_path}: {e}\n")
+                # ── BD7: Study deck generation (non-blocking, errors caught) ──
+                if use_study_deck:
+                    try:
+                        from study_deck import build_study_deck
+                        srt_files = [f for f in current_file_downloads if f.endswith('.srt')]
+                        if srt_files and clean_paths:
+                            srt_text = ""
+                            for sf in srt_files:
+                                try:
+                                    with open(sf, 'r', encoding='utf-8') as srf:
+                                        srt_text = srf.read()
+                                    break
+                                except Exception:
+                                    pass
+                            if srt_text and clean_paths:
+                                clean_text_val = ""
+                                for cp in clean_paths:
+                                    try:
+                                        with open(cp, 'r', encoding='utf-8') as cf:
+                                            clean_text_val = cf.read()
+                                        break
+                                    except Exception:
+                                        pass
+                                if clean_text_val:
+                                    deck_files = build_study_deck(
+                                        clean_text=clean_text_val,
+                                        translated_text="",
+                                        srt_text=srt_text,
+                                        base_name=base_name,
+                                        output_dir=current_out_dir,
+                                        source_lang_code=language if language != "auto" else "en",
+                                        known_terms_file=os.path.join(global_out_dir, "known_terms.txt"),
+                                    )
+                                    for df in deck_files:
+                                        log_queue.put(f"[STUDY DECK] {os.path.basename(df)}\n")
+                    except Exception as e:
+                        log_queue.put(f"[STUDY DECK] Skipped: {e}\n")
                 current_file_downloads.extend(clean_paths)
                 
             if stop_requested and not current_file_downloads:
@@ -759,7 +812,7 @@ def run_transcription(
         # ── Honest batch summary (BD11) ──
         ok_count = batch_queue.get_completed_count()
         failed_count = batch_queue.get_failed_count()
-        skipped_count = batch_queue.get_total_items() - ok_count - failed_count
+        skipped_count = batch_queue.get_skipped_count()
         if failed_count > 0 or skipped_count > 0:
             log_queue.put(f"\nBATCH DONE. ok: {ok_count} | failed: {failed_count} | skipped: {skipped_count}\n")
             final_status = gr.update(elem_classes=["status-error"])

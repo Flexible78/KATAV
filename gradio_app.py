@@ -162,7 +162,9 @@ def prepare_start(
     beam_size_val: float, patience_val: float, condition_on_prev_val: bool,
     no_speech_thresh_val: float, use_sentence_val: bool, use_print_progress_val: bool,
     use_beep_off_val: bool, use_custom_output_val: bool, output_dir_val: str,
-    plain_text_output_val: bool = False
+    plain_text_output_val: bool = False,
+    skip_done_val: bool = True, use_study_deck_val: bool = False,
+    study_min_count_val: float = 2, study_max_terms_val: float = 300
 ):
     global batch_items, batch_total, batch_completed, batch_failed, batch_current_name, batch_current_idx
     global transcribe_percent, translate_percent, translation_seen, current_phase
@@ -223,6 +225,10 @@ def prepare_start(
         "use_beep_off": use_beep_off_val, "use_custom_output": use_custom_output_val,
         "output_dir": output_dir_val,
         "plain_text_output": plain_text_output_val,
+        "skip_done": skip_done_val,
+        "use_study_deck": use_study_deck_val,
+        "study_min_count": int(study_min_count_val),
+        "study_max_terms": int(study_max_terms_val),
     }
     for qi in batch_queue.get_items():
         batch_queue.set_settings_snapshot(qi.idx, settings_snap)
@@ -730,6 +736,16 @@ def build_app():
                             
                         export_json_status = gr.Textbox(label="VOCAB STATUS", lines=2, interactive=False)
 
+                with gr.Accordion("LEARNING", open=False):
+                    with gr.Row():
+                        use_study_deck = gr.Checkbox(label="STUDY DECK", value=False, title="Build a frequency-based study deck from the transcript")
+                        study_min_count = gr.Number(value=2, label="MIN COUNT", precision=0, minimum=1, scale=1)
+                        study_max_terms = gr.Number(value=300, label="MAX TERMS", precision=0, minimum=10, scale=1)
+
+                with gr.Row(elem_classes=["uniform-row"]):
+                    skip_done_checkbox = gr.Checkbox(label="SKIP DONE", value=True, title="Skip files that already have output in the selected formats")
+                    retry_failed_btn = gr.Button("RETRY FAILED", variant="secondary", elem_classes=["fixed-height-btn"], min_width=40)
+                
                 with gr.Row(elem_classes=["uniform-row"]):
                     start_btn = gr.Button("START", variant="secondary", elem_id="start_btn", elem_classes=["fixed-height-btn"])
                     start_full_btn = gr.Button("FULL CYCLE", variant="secondary", elem_id="start_full_btn", elem_classes=["fixed-height-btn"])
@@ -737,6 +753,10 @@ def build_app():
                     stop_btn = gr.Button("STOP", variant="stop", elem_id="stop_btn", elem_classes=["fixed-height-btn"])
                     restart_btn = gr.Button("RELOAD", variant="secondary", elem_classes=["fixed-height-btn"], min_width=40)
                     exit_btn = gr.Button("EXIT", variant="stop", elem_id="exit_btn", elem_classes=["fixed-height-btn"], min_width=40)
+                
+                with gr.Row(elem_classes=["uniform-row"]):
+                    open_output_btn = gr.Button("OPEN OUTPUT FOLDER", variant="secondary", elem_classes=["fixed-height-btn"])
+                    output_size_label = gr.Textbox(label="", value="", interactive=False, show_label=False, scale=10)
 
                 with gr.Row():
                     shutdown_checkbox = gr.Checkbox(label="Shut down Windows after batch completes", value=False, elem_id="shutdown_cb")
@@ -975,7 +995,8 @@ def build_app():
             beam_size, patience, condition_on_prev, no_speech_thresh, 
             use_sentence, use_print_progress, use_vad_filter, use_beep_off, 
             use_custom_output, output_folder, output_formats, save_audio_track,
-            plain_text_output
+            plain_text_output,
+            skip_done_checkbox, use_study_deck, study_min_count, study_max_terms
         ]
 
         # ── All settings for snapshot ──
@@ -988,7 +1009,8 @@ def build_app():
             beam_size, patience, condition_on_prev,
             no_speech_thresh, use_sentence, use_print_progress,
             use_beep_off, use_custom_output, output_folder,
-            plain_text_output
+            plain_text_output,
+            skip_done_checkbox, use_study_deck, study_min_count, study_max_terms
         ]
 
         check_api_btn.click(
@@ -1040,6 +1062,46 @@ def build_app():
             outputs=[export_json_status, hidden_dl_files, clean_text_output]
         )
         
+        # ── BD8: SKIP DONE, RETRY FAILED, OPEN OUTPUT FOLDER ──
+        def on_retry_failed():
+            count = batch_queue.retry_failed()
+            gr.Info(f"{count} failed item(s) returned to queue.")
+
+        def on_open_output_folder(manual_path_val, use_custom, custom_dir):
+            from utils import get_actual_output_dir
+            out_dir = get_actual_output_dir(manual_path_val, use_custom, custom_dir)
+            if os.path.isdir(out_dir):
+                import subprocess as _sp
+                _sp.Popen(["explorer", out_dir], shell=True)
+
+        def on_output_size(manual_path_val, use_custom, custom_dir):
+            from utils import get_actual_output_dir
+            out_dir = get_actual_output_dir(manual_path_val, use_custom, custom_dir)
+            if not os.path.isdir(out_dir):
+                return ""
+            total = 0
+            try:
+                for f in os.listdir(out_dir):
+                    fp = os.path.join(out_dir, f)
+                    if os.path.isfile(fp):
+                        total += os.path.getsize(fp)
+            except Exception:
+                pass
+            if total < 1024:
+                return f"{total} B"
+            elif total < 1024 * 1024:
+                return f"{total / 1024:.1f} KB"
+            elif total < 1024 * 1024 * 1024:
+                return f"{total / (1024 * 1024):.1f} MB"
+            return f"{total / (1024 * 1024 * 1024):.2f} GB"
+
+        retry_failed_btn.click(fn=on_retry_failed, queue=False)
+        open_output_btn.click(
+            fn=on_open_output_folder,
+            inputs=[manual_path, use_custom_output, output_folder],
+            queue=False,
+        )
+
         pause_btn.click(fn=utils.toggle_pause, outputs=[pause_btn])
         stop_btn.click(fn=stop_all_processes, outputs=[log_box], queue=False)
         _EXIT_JS = """function(){
@@ -1106,6 +1168,28 @@ def build_app():
             fn=eco_preset,
             outputs=[model_size, compute_type, beam_size, condition_on_prev, use_vad_filter]
         )
+
+        # Output folder size refresher (via gr.State to avoid .value access on timer)
+        _out_dir_state = gr.State("")
+        _use_custom_state = gr.State(False)
+        _custom_dir_state = gr.State("")
+
+        def _sync_out_state(mp, uc, cd):
+            return (mp, uc, cd)
+
+        def _refresh_output_size(mp, uc, cd):
+            return on_output_size(mp, uc, cd)
+
+        # Sync state on any path/custom change
+        for src in [manual_path, use_custom_output, output_folder]:
+            src.change(fn=_sync_out_state,
+                       inputs=[manual_path, use_custom_output, output_folder],
+                       outputs=[_out_dir_state, _use_custom_state, _custom_dir_state],
+                       queue=False)
+
+        timer.tick(fn=_refresh_output_size,
+                   inputs=[_out_dir_state, _use_custom_state, _custom_dir_state],
+                   outputs=[output_size_label])
 
         # Restore theme class on page load (theme toggle removed, this is a no-op kept for compatibility)
         app.load(fn=lambda theme: theme, inputs=[theme_state], outputs=[theme_state])
