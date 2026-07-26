@@ -421,6 +421,11 @@ class QueueManager:
                     if it.duration > 0:
                         it.processed_seconds = it.duration * (percent / 100.0)
 
+    def update_current_file_eta(self, remaining_seconds: float):
+        """Update the current running file's remaining seconds from Whisper progress."""
+        with self._lock:
+            self._current_file_media_remaining = max(0.0, float(remaining_seconds or 0.0))
+
     def update_url_duration(self, idx: int, duration: float):
         """Update a URL item's duration after metadata is resolved."""
         with self._lock:
@@ -504,42 +509,43 @@ class QueueManager:
     def calculate_eta(self) -> float:
         """
         Calculate estimated seconds remaining for the batch.
-        Uses measured processing speed from real completed work.
+        Uses measured processing speed from real completed work and the
+        remaining time reported by Whisper for the current file.
         Returns -1 if not enough data.
         """
         with self._lock:
-            if self._cumulative_wall_seconds < 5 and self._cumulative_media_seconds <= 0:
-                return -1.0
-
-            # Speed = processed_media_seconds / wall_clock_seconds
-            speed = 0.0
-            if self._cumulative_wall_seconds > 0:
-                speed = self._cumulative_media_seconds / self._cumulative_wall_seconds
-
-            # Also factor in current file progress
             running = None
             for it in self._items:
                 if it.status == "running":
                     running = it
                     break
 
+            # Build measured speed from completed items first.
+            speed = 0.0
+            if self._cumulative_wall_seconds > 0:
+                speed = self._cumulative_media_seconds / self._cumulative_wall_seconds
+
+            # Factor in current file progress for a live speed estimate.
             current_speed = 0.0
             if running and running.started_at > 0:
                 wall_now = time.time() - running.started_at
-                if wall_now >= 5 and running.processed_seconds > 0:
+                if wall_now >= 3 and running.processed_seconds > 0:
                     current_speed = running.processed_seconds / wall_now
 
-            # Blend: prefer current file speed if available
             effective_speed = current_speed if current_speed > 0 else speed
             if effective_speed <= 0:
                 return -1.0
 
-            # Remaining media seconds
+            # Remaining media seconds: current file remainder from Whisper + queued durations.
             remaining_media = 0.0
+            if running and running.duration > 0:
+                remaining_media += max(0.0, running.duration - running.processed_seconds)
+            elif running:
+                # Fallback if duration unknown: use Whisper's own remaining estimate.
+                remaining_media += self._current_file_media_remaining
+
             for it in self._items:
-                if it.status == "running" and it.duration > 0:
-                    remaining_media += max(0, it.duration - it.processed_seconds)
-                elif it.status == "queued" and it.duration > 0:
+                if it.status == "queued" and it.duration > 0:
                     remaining_media += it.duration
 
             if remaining_media <= 0:

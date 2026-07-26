@@ -264,6 +264,49 @@ def canonical_media_url(url: str) -> str:
         return url
 
 
+WHISPER_PROGRESS_RE = re.compile(
+    r"(?P<percent>\d+(?:\.\d+)?)%\s*\|\s*"
+    r"(?P<done>\d+)\/(?P<total>\d+)\s*\|\s*"
+    r"(?P<elapsed>(?:\d{1,2}:)?\d{2}:\d{2})\s*<<?\s*(?P<remaining>(?:\d{1,2}:)?\d{2}:\d{2})\s*\|\s*"
+    r"(?P<speed>[\d.]+)\s*audio\s*seconds?\/s",
+    re.IGNORECASE,
+)
+
+
+def _parse_time_to_seconds(value: str) -> int:
+    """Convert 'HH:MM:SS' or 'MM:SS' to total seconds."""
+    parts = [int(p) for p in value.strip().split(":") if p.isdigit()]
+    if len(parts) == 2:
+        return parts[0] * 60 + parts[1]
+    if len(parts) == 3:
+        return parts[0] * 3600 + parts[1] * 60 + parts[2]
+    return 0
+
+
+def parse_whisper_progress(line: str) -> Dict[str, Any] | None:
+    """Parse a faster-whisper progress line into structured data.
+
+    Example: '89% | 728/818 | 02:29<<00:24 |  4.87 audio seconds/s'
+    Returns a dict with: percent, done, total, elapsed_seconds, remaining_seconds, speed.
+    """
+    if not line:
+        return None
+    match = WHISPER_PROGRESS_RE.search(line)
+    if not match:
+        return None
+    try:
+        return {
+            "percent": float(match.group("percent")),
+            "done": int(match.group("done")),
+            "total": int(match.group("total")),
+            "elapsed_seconds": _parse_time_to_seconds(match.group("elapsed")),
+            "remaining_seconds": _parse_time_to_seconds(match.group("remaining")),
+            "speed": float(match.group("speed")),
+        }
+    except Exception:
+        return None
+
+
 def process_logs(current_log: str) -> Tuple[str, str]:
     global current_percent, time_elapsed, time_remaining, audio_speed, full_whisper_log, current_action
     new_text = current_log

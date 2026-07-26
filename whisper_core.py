@@ -421,12 +421,11 @@ def run_transcription(
             for raw_line in process.stdout:
                 line = utils.strip_ansi(raw_line)
                 log_queue.put(line + ("\n" if not line.endswith("\n") else ""))
-                # Parse percent from lines like: 89% | 728/818 | ...
-                match = re.search(r"(\d+(?:\.\d+)?)%\s*\|\s*\d+\/\d+", line)
-                if match:
+                progress = utils.parse_whisper_progress(line)
+                if progress:
                     try:
-                        percent = float(match.group(1))
-                        batch_queue.update_item_progress(item_idx, percent)
+                        batch_queue.update_item_progress(item_idx, progress["percent"])
+                        batch_queue.update_current_file_eta(progress["remaining_seconds"])
                     except Exception:
                         pass
         except Exception:

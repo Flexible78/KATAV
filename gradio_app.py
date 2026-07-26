@@ -213,17 +213,17 @@ def process_logs(current_log: str):
             line = log_queue.get()
 
             # ── Whisper progress ──
-            match_w = re.search(r'(\d+)%\s*\|\s*\d+/\d+\s*\|\s*(\d{2}:\d{2})<<?(\d{2}:\d{2})\s*\|\s*([\d.]+)', line)
-            if match_w:
+            progress = utils.parse_whisper_progress(line)
+            if progress:
                 if utils.model_load_start_time > 0:
                     load_elapsed = time.time() - utils.model_load_start_time
                     utils.log_queue.put(f"[STAGE] Model ready in {load_elapsed:.1f}s\n")
                     utils.log_queue.put("[STAGE] Transcription started\n")
                     utils.model_load_start_time = 0.0
-                current_percent = int(match_w.group(1))
-                time_elapsed = match_w.group(2)
-                time_remaining = match_w.group(3)
-                audio_speed = f"{match_w.group(4)}x"
+                current_percent = int(progress["percent"])
+                time_elapsed = format_duration(progress["elapsed_seconds"])
+                time_remaining = format_duration(progress["remaining_seconds"])
+                audio_speed = f"{progress['speed']:.2f}x"
                 current_action = "Transcription"
 
             # ── AI Translation progress (K7: extended chunk info) ──
@@ -246,7 +246,9 @@ def process_logs(current_log: str):
                 time_elapsed = f"{e_sec//60:02d}:{e_sec%60:02d}"
                 r_sec = int((e_sec / req_done) * (req_total - req_done)) if req_done > 0 else 0
                 time_remaining = f"{r_sec//60:02d}:{r_sec%60:02d}"
-                audio_speed = "API"
+                # Approximate translation throughput in chunks per minute.
+                chunk_per_min = int((req_done / max(e_sec, 1)) * 60) if req_done > 0 else 0
+                audio_speed = f"{chunk_per_min} chunks/min"
                 continue
 
             # ── Batch status from queue manager ──
