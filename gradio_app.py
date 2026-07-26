@@ -65,6 +65,45 @@ batch_failed = 0
 batch_current_name = ""
 batch_current_idx = 0
 
+
+def append_url_to_input(current_urls: str, new_url: str):
+    """Append a URL to the urls_input, deduplicating. Returns (updated_urls, new_url_field_value)."""
+    new_url = (new_url or "").strip()
+    if not new_url:
+        return current_urls or "", ""
+    if not re.match(r'^https?://', new_url):
+        gr.Warning(f"Invalid URL: {new_url[:80]}")
+        return current_urls or "", new_url
+    # Normalise to a canonical media URL for stable deduplication
+    new_canonical = utils.canonical_media_url(new_url)
+    new_norm = new_canonical.rstrip("/")
+    existing = (current_urls or "").strip()
+    existing_urls = [u.strip() for u in existing.split('\n') if u.strip()]
+    # Check if already in list
+    for eu in existing_urls:
+        if utils.canonical_media_url(eu).rstrip("/") == new_norm:
+            gr.Info(f"Already in list: {new_url[:60]}")
+            return current_urls or "", ""
+    # Check batch_queue (no I/O; pure in-memory lock lookup)
+    all_items = batch_queue.get_items()
+    for it in all_items:
+        if it.source == "url" and it.path_or_url.rstrip("/") == new_norm:
+            gr.Info(f"Already in queue: {new_url[:60]}")
+            return current_urls or "", ""
+
+    # If a batch is already running, also enqueue live so it appears in the queue panel.
+    if utils.process_active:
+        batch_queue.add_url(new_url)
+        total_pending = batch_queue.get_total_items()
+        utils.log_queue.put(f"[QUEUE] URL added ({total_pending} total pending): {new_url[:120]}\n")
+    else:
+        utils.log_queue.put(f"[QUEUE] URL added: {new_url[:120]}\n")
+
+    # Append the original user input (canonicalisation happens at download time)
+    if existing:
+        return existing + "\n" + new_url, ""
+    return new_url, ""
+
 def get_model_choices(models_config):
     if isinstance(models_config, dict): return [v[0] for k, v in models_config.items()]
     elif isinstance(models_config, list):
@@ -821,45 +860,6 @@ def build_app():
             outputs=[api_model]
         )
         
-        def append_url_to_input(current_urls: str, new_url: str):
-            """Append a URL to the urls_input, deduplicating. Returns (updated_urls, new_url_field_value)."""
-            new_url = (new_url or "").strip()
-            if not new_url:
-                return current_urls or "", ""
-            if not re.match(r'^https?://', new_url):
-                gr.Warning(f"Invalid URL: {new_url[:80]}")
-                return current_urls or "", new_url
-            # Normalise to a canonical media URL for stable deduplication
-            new_canonical = utils.canonical_media_url(new_url)
-            new_norm = new_canonical.rstrip("/")
-            existing = (current_urls or "").strip()
-            existing_urls = [u.strip() for u in existing.split('\n') if u.strip()]
-            # Check if already in list
-            for eu in existing_urls:
-                if utils.canonical_media_url(eu).rstrip("/") == new_norm:
-                    gr.Info(f"Already in list: {new_url[:60]}")
-                    return current_urls or "", ""
-            # Check batch_queue
-            all_items = batch_queue.get_items()
-            for it in all_items:
-                if it.source == "url" and it.path_or_url.rstrip("/") == new_norm:
-                    gr.Info(f"Already in queue: {new_url[:60]}")
-                    return current_urls or "", ""
-
-            # If a batch is already running, also enqueue live so it appears in the queue panel.
-            import utils as _utils
-            if getattr(_utils, 'process_active', False):
-                batch_queue.add_url(new_url)
-                total_pending = batch_queue.get_total_items()
-                _utils.log_queue.put(f"[QUEUE] URL added ({total_pending} total pending): {new_url[:120]}\n")
-            else:
-                _utils.log_queue.put(f"[QUEUE] URL added: {new_url[:120]}\n")
-
-            # Append the original user input (canonicalisation happens at download time)
-            if existing:
-                return existing + "\n" + new_url, ""
-            return new_url, ""
-
         def paste_url_from_clipboard(current_new_url: str) -> str:
             txt = read_clipboard_text()
             lines = [l.strip() for l in txt.splitlines() if l.strip()]

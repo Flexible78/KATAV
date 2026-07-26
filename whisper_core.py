@@ -473,7 +473,11 @@ def run_transcription(
             command.extend(["--threads", str(WHISPER_MAX_THREADS)])
             command.extend(["--output_dir", current_out_dir, "--", video_path])
 
-            current_process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace', bufsize=1, universal_newlines=True, creationflags=creationflags, env=env)
+            # Log the exact command for diagnostics ([CMD] one element per line)
+            for i, cmd_part in enumerate(command):
+                log_queue.put(f"[CMD] {i}: {cmd_part}\n")
+
+            current_process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace', bufsize=1, creationflags=creationflags, env=env)
             threading.Thread(target=enqueue_output, args=(current_process.stdout, log_queue), daemon=True).start()
             current_process.wait() 
             if idx < len(files_to_process) - 1 and WHISPER_COOLDOWN_SEC > 0:
