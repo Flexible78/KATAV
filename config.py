@@ -83,24 +83,61 @@ DEFAULT_SYSTEM_PROMPT = (
 GEMMA_SYSTEM_PROMPT = f"disable reasoning and thought. </thought off>.\n{DEFAULT_SYSTEM_PROMPT}"
 
 
-# Target languages shown in the UI and their matching metadata.
-TARGET_LANGUAGES = ["Russian", "English", "Hebrew"]
-TARGET_LANGUAGE_DEFAULTS = ["English", "Hebrew"]
+# Target languages shown in the UI as (label, code) pairs for CheckboxGroup.
+# Only the *code* is stored in settings, passed to handlers, and used in filenames.
+TARGET_LANGUAGES = [("Russian", "RU"), ("English", "EN"), ("Hebrew", "HE")]
+
+# The default selected language *codes* (not labels).
+TARGET_LANGUAGE_DEFAULTS = ["EN", "HE"]
+
+# Stable-code-keyed markers for source-language detection from filenames.
 TARGET_LANGUAGE_MARKERS = {
-    "Russian": {"ru", "rus", "russian", "русский"},
-    "English": {"en", "eng", "english"},
-    "Hebrew": {"he", "heb", "hebrew", "עברית"},
+    "RU": {"ru", "rus", "russian", "русский"},
+    "EN": {"en", "eng", "english"},
+    "HE": {"he", "heb", "hebrew", "עברית"},
 }
+
+# Maps any known variant (display name, old label, code) → stable code.
+# Used for migration of saved settings and as a fallback in translation.
 TARGET_LANGUAGE_CODE_MAP = {
-    "Russian": "RU",
-    "English": "EN",
-    "Hebrew": "HE",
+    # Stable codes → self
+    "RU": "RU", "EN": "EN", "HE": "HE",
+    # Display labels
+    "Russian": "RU", "English": "EN", "Hebrew": "HE",
+    # Old / legacy labels (the ones that crash the UI)
+    "Русский": "RU", "русский": "RU",
+    "עברית (Hebrew)": "HE", "עברית": "HE",
+    # Two-letter codes
+    "ru": "RU", "en": "EN", "he": "HE",
+    "rus": "RU", "eng": "EN", "heb": "HE",
+    # Other variants
+    "иврит": "HE",
 }
+
+# Compatibility table for settings migration: old value → stable code.
+_LANG_MIGRATION_TABLE = TARGET_LANGUAGE_CODE_MAP
 
 
 # ==============================================================================
 # 4. КАСТОМНЫЕ СТИЛИ (CSS) ДЛЯ ВЕБ-ИНТЕРФЕЙСА
 # ==============================================================================
+def sanitize_choice_value(value: str, valid_choices: list) -> str | None:
+    """Return *value* if it appears in *valid_choices*, otherwise None.
+
+    For CheckboxGroup/Dropdown/Radio, valid_choices may be a flat list of
+    codes or a list of (label, code) tuples.  In the tuple case we match
+    against the second element only (the actual value).
+    """
+    if not valid_choices:
+        return None
+    # Flat list of strings
+    if isinstance(valid_choices[0], str):
+        return value if value in valid_choices else None
+    # List of (label, value) pairs
+    for pair in valid_choices:
+        if isinstance(pair, (list, tuple)) and len(pair) >= 2 and pair[1] == value:
+            return value
+    return None
 custom_css = """
 :root {
     --katav-bg: #2d2d30;

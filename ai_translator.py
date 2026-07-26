@@ -74,11 +74,11 @@ def _detect_source_language(fpath: str, base_name: str, source_language: str) ->
             if detected:
                 return lang_code(detected)
 
-    # 3. Filename token matching
+    # 3. Filename token matching (markers are now keyed by stable code)
     tokens = {t.lower() for t in re.split(r'[_\\-\\.\\s\\(\\)\\[\\]]+', base_name) if t}
-    for lang_name, markers in _LANG_DETECT_MAP.items():
+    for lang_code_key, markers in _LANG_DETECT_MAP.items():
         if tokens & markers:
-            return lang_code(lang_name)
+            return lang_code(lang_code_key)
 
     return "auto"
 
@@ -344,6 +344,7 @@ def translate_content(
 
     def _matched_language_tokens(base_name: str, target_lang: str) -> List[str]:
         tokens = _tokenize_filename(base_name)
+        # target_lang is a stable code (RU/EN/HE); look up markers by code.
         markers = _LANG_DETECT_MAP.get(target_lang, set())
         return [t for t in tokens if t in markers]
 
@@ -412,7 +413,8 @@ def translate_content(
             if len(chunks) == 1:
                 live_log(f"[TRANSLATE] Single chunk ({len(chunks[0])} blocks) - no split needed.")
 
-            lang_suffix = TARGET_LANGUAGE_CODE_MAP.get(target_lang, "TRANS")
+            # lang_suffix is the stable code (RU/EN/HE) — always resolves from CODE_MAP
+            lang_suffix = TARGET_LANGUAGE_CODE_MAP.get(target_lang, lang_code(target_lang).upper())
             
             for idx, chunk in enumerate(chunks):
                 while getattr(utils, 'pause_requested', False) and not getattr(utils, 'stop_requested', False):
@@ -564,7 +566,7 @@ def translate_content(
 
             if translated_blocks:
                 final_translated_text = "\n\n".join(translated_blocks)
-                lang_suffix = TARGET_LANGUAGE_CODE_MAP.get(target_lang, "TRANS")
+                # lang_suffix already resolved to a stable code above
                 orig_ext = os.path.splitext(fpath)[1] if fpath != "PLAIN_TEXT" else ".txt"
                 ext = orig_ext if orig_ext else ".txt"
                 
