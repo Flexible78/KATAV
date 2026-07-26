@@ -324,11 +324,16 @@ def process_logs(current_log: str):
     elif sd["cancelled"]:
         shutdown_html = '<div style="margin-top:8px;padding:8px;background:rgba(16,185,129,0.1);border:1px solid #10b981;border-radius:6px;text-align:center;"><span style="color:#10b981;">Shutdown cancelled.</span></div>'
 
-    # ── Metrics panel (E1: durations and ETA, E6: refined layout) ──
+    # ── Metrics panel (K2: honest ETA, TOTAL AUDIO label, single-file layout) ──
     batch_total_dur = batch_queue.get_total_media_seconds()
-    batch_dur_display = format_duration(batch_total_dur) if batch_total_dur > 0 else "Calculating…"
+    batch_dur_display = format_duration(batch_total_dur) if batch_total_dur > 0 else "--:--"
     eta = batch_queue.calculate_eta()
-    eta_display = format_duration(eta) if eta >= 0 else "Calculating…"
+    if batch_total_dur <= 0:
+        eta_display = "unknown"
+    elif eta < 0:
+        eta_display = "Calculating…"
+    else:
+        eta_display = format_duration(eta)
     elapsed_display = batch_queue.get_elapsed_str()
     # Use queue manager time_elapsed if available, else fallback
     if batch_queue.get_running_item():
@@ -336,21 +341,30 @@ def process_logs(current_log: str):
 
     overall_pct = int(((batch_completed + batch_failed) / max(batch_total, 1)) * 100) if batch_total > 0 else current_percent
 
-    metrics_html = f"""
-    <div style="background: rgba(30, 30, 32, 0.9); padding: 12px; border-radius: 10px; border: 1px solid #52525b; margin-bottom: 8px;">
-        <div style="display: flex; justify-content: space-between; margin-bottom: 6px; font-weight: bold; font-size: 14px; color: #f4f4f5; text-transform: uppercase;">
+    # Single-file mode: hide batch-level header/progress bar to avoid duplicated info.
+    single_item_mode = (batch_total == 1)
+    if single_item_mode:
+        batch_header_html = ""
+        overall_progress_html = ""
+    else:
+        batch_header_html = f"""        <div style="display: flex; justify-content: space-between; margin-bottom: 6px; font-weight: bold; font-size: 14px; color: #f4f4f5; text-transform: uppercase;">
             <span>{current_action}</span>
             <span style="color: #ea580c;">{overall_pct}%</span>
             <span style="font-size:10px;color:#71717a;font-weight:normal;">{batch_completed + batch_failed}/{max(batch_total,1)}</span>
-        </div>
-        <div style="width: 100%; background-color: #18181b; border-radius: 6px; overflow: hidden; height: 18px; border: 1px solid #27272a;">
+        </div>"""
+        overall_progress_html = f"""        <div style="width: 100%; background-color: #18181b; border-radius: 6px; overflow: hidden; height: 18px; border: 1px solid #27272a; margin-bottom: 8px;">
             <div style="width: {overall_pct}%; height: 100%; background: linear-gradient(90deg, #9a3412, #ea580c); transition: width 0.3s ease;"></div>
-        </div>
+        </div>"""
+
+    metrics_html = f"""
+    <div style="background: rgba(30, 30, 32, 0.9); padding: 12px; border-radius: 10px; border: 1px solid #52525b; margin-bottom: 8px;">
+        {batch_header_html}
+        {overall_progress_html}
         <div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 6px; margin-top: 8px;">
             <div style="text-align:center;"><div style="font-size:9px;color:#71717a;text-transform:uppercase;">Elapsed</div><div style="color:#d4d4d8;font-family:monospace;font-size:13px;font-weight:700;">{time_elapsed}</div></div>
             <div style="text-align:center;"><div style="font-size:9px;color:#71717a;text-transform:uppercase;">ETA</div><div style="color:#f87171;font-family:monospace;font-size:13px;font-weight:700;">{eta_display}</div></div>
             <div style="text-align:center;"><div style="font-size:9px;color:#71717a;text-transform:uppercase;">Speed</div><div style="color:#34d399;font-family:monospace;font-size:13px;font-weight:700;">{audio_speed}</div></div>
-            <div style="text-align:center;"><div style="font-size:9px;color:#71717a;text-transform:uppercase;" title="ETA excludes items whose duration is not known yet.">Batch Dur</div><div style="color:#a78bfa;font-family:monospace;font-size:13px;font-weight:700;">{batch_dur_display}</div></div>
+            <div style="text-align:center;"><div style="font-size:9px;color:#71717a;text-transform:uppercase;" title="Total duration of all known items in the queue.">Total Audio</div><div style="color:#a78bfa;font-family:monospace;font-size:13px;font-weight:700;">{batch_dur_display}</div></div>
         </div>
         {file_progress_html}{batch_panel_html}{shutdown_html}
     </div>
