@@ -816,11 +816,6 @@ def build_app():
                     inputs=[],
                     outputs=[urls_input, manual_path, input_file, new_url_input]
                 )
-                clear_media_btn_lower.click(
-                    fn=lambda: ("", "", None, ""),
-                    inputs=[],
-                    outputs=[urls_input, manual_path, input_file, new_url_input]
-                )
 
                 clear_trans_files_btn.click(
                     fn=lambda: ("", None),
