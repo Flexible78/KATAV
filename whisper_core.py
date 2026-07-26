@@ -203,7 +203,6 @@ def _download_url_to_queue(
         title = _get_url_title(url, cookie_browser) or video_id or "media"
         local_path = _copy_to_output(cached_path, output_dir, title)
         files_to_process.append(local_path)
-        downloaded_audio_files.append(local_path)
         if item_idx is not None:
             duration = _get_file_duration(local_path)
             batch_queue.update_url_to_local(item_idx, local_path, name=title[:80], duration=duration)
@@ -271,7 +270,6 @@ def _download_url_to_queue(
                 title = _get_url_title(url, cookie_browser) or video_id or "media"
                 local_path = _copy_to_output(printed_path, output_dir, title)
                 files_to_process.append(local_path)
-                downloaded_audio_files.append(local_path)
                 if item_idx is not None:
                     duration = _get_file_duration(local_path)
                     batch_queue.update_url_to_local(item_idx, local_path, name=title[:80], duration=duration)
