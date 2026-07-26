@@ -756,28 +756,61 @@ Batch of fixes for translation duplication, queue lifecycle, honest ETA, single 
 
 ---
 
-## 2026-07-26 — BC5-BC8 (KATAV run 2, model: Kimi K2.7)
-- **BC5** — `gradio_app.py`, `whisper_core.py`, `queue_manager.py`, `test_url_pipeline.py`: added `➕ ADD PLAYLIST` button next to `➕ ADD URL`; `expand_playlist` uses `yt_dlp.YoutubeDL` with `extract_flat="in_playlist"`, `skip_download=True`, and `socket_timeout=10`; auto-generated lists (`RD`/`UL`) are rejected; duplicates are removed; capped at 50 items with a log message; each video becomes a canonical `watch?v=<id>` queue item with `playlist_index` and `playlist_title` metadata; filenames are prefixed with `001_`, `002_`, etc.
-- **BC6** — `gradio_app.py`, `batch_results.py`, `queue_manager.py`: added `BATCH RESULTS` UI with `JOIN INTO ONE FILE`, `ZIP RESULTS`, and a download component; `join_batch_results` groups produced text/subtitle files by inferred language and writes one `batch_JOINED_<LANG>.txt` per language with `## 001 — <name>` headers; `zip_batch_results` creates a `batch_<YYYYMMDD_HHMM>.zip` with `ZIP_DEFLATED`, UTF-8 arcnames, excludes `_url_cache` and audio unless `include audio` is checked.
-- **BC7** — `gradio_app.py`, `config.py`, `ui_manager.py`: introduced CSS custom properties (`--katav-bg`, `--katav-panel`, `----katav-text`, `--katav-accent`, `--katav-border`) and a `🌓 Toggle Theme` button; a client-side JS toggles the `katav-light` class on `document.body`, persists the choice in `localStorage`, and restores it on page load; the setting is also saved in `ui_state`.
-- **BC8** — `whisper_core.py`, `requirements.txt`, `docs/USAGE.md`: added public Google Drive shared-link support using lazy `gdown==5.2.0`; files are downloaded to `Outputs/_url_cache`; private/restricted links produce a clear error message; explicitly did not implement authorized Drive access or Spotify (documented in `docs/USAGE.md`).
+## Snapshot 2026-07-26 — BC5-BC8 Feature batch (KATAV run 2, model: Kimi K2.7)
+
+### Summary
+Second run of the BC batch: YouTube playlist expansion, batch post-processing (JOIN/ZIP), light/dark theme toggle, and public Google Drive input support.
+
+### What changed
+- **BC5 (queue)** — `gradio_app.py`, `whisper_core.py`, `queue_manager.py`, `test_url_pipeline.py`: added the `➕ ADD PLAYLIST` button next to `➕ ADD URL`; `expand_playlist` uses `yt_dlp.YoutubeDL` with `extract_flat="in_playlist"`, `skip_download=True`, and `socket_timeout=10`; auto-generated Mix/Radio lists (`RD`/`UL`) are rejected; duplicates are removed by video id; the list is capped at 50 items with a log message; each video becomes a canonical `watch?v=<id>` queue item carrying `playlist_index` and `playlist_title` metadata; filenames are prefixed with `001_`, `002_`, etc. when downloaded.
+- **BC6 (output)** — `gradio_app.py`, `batch_results.py`, `queue_manager.py`, `utils.py`: added a `BATCH RESULTS` UI with `JOIN INTO ONE FILE`, `ZIP RESULTS`, and a download component; `join_batch_results` groups produced text/subtitle files by inferred language and writes one `batch_JOINED_<LANG>.txt` per language with `## 001 — <name>` headers; `zip_batch_results` creates `batch_<YYYYMMDD_HHMM>.zip` using `ZIP_DEFLATED`, UTF-8 arcnames, excludes `_url_cache` and audio unless the `include audio` checkbox is checked; `_url_cache_dir` was moved to `utils.py` for shared use.
+- **BC7 (ui)** — `gradio_app.py`, `config.py`: introduced CSS custom properties (`--katav-bg`, `--katav-panel`, `--katav-text`, `--katav-accent`, `--katav-border`) and a `🌓 Toggle Theme` button; a client-side JS toggles the `katav-light` class on `document.body`, persists the choice in `localStorage`, and restores it on page load via `app.load(..., js=...)`; the setting is also saved in `ui_state`.
+- **BC8 (input)** — `whisper_core.py`, `requirements.txt`, `docs/USAGE.md`: added public Google Drive shared-link support using lazy `gdown==5.2.0`; files are downloaded to `Outputs/_url_cache`; private/restricted links produce a clear error message; authorized Drive access and Spotify were explicitly not implemented (documented in `docs/USAGE.md`).
 
 ### New files
 - `batch_results.py` — `join_batch_results` and `zip_batch_results` helpers.
 
 ### Modified files
-- `whisper_core.py` — playlist expansion, Google Drive download, produced-files tracking, URL processing refactor.
-- `queue_manager.py` — `produced_files` field and helpers, playlist metadata propagation.
+- `whisper_core.py` — playlist expansion, Google Drive download, produced-files tracking, URL processing refactor, defensive `_output_title_for_item` that prefers cached metadata.
+- `queue_manager.py` — `produced_files` field and helpers (`add_produced_file`, `get_batch_results`), playlist metadata propagation in `replace_item_with_playlist_entries`.
 - `gradio_app.py` — ADD PLAYLIST button, BATCH RESULTS UI (JOIN/ZIP), theme toggle.
 - `config.py` — CSS variables for light/dark theme.
+- `utils.py` — added shared `_url_cache_dir()` helper.
 - `requirements.txt` — added `gdown==5.2.0`.
 - `docs/USAGE.md` — documented Google Drive limitations and Spotify workaround.
-- `test_url_pipeline.py` — added tests for playlist expansion (dedup, cap, RD/UL rejection, Google Drive, batch results).
+- `test_url_pipeline.py` — added tests for playlist expansion (dedup, cap, RD/UL rejection), Google Drive URL detection, and batch results helpers.
+- `agent.md` — this section.
 
-### Verification
+### Commits
+- `c240a7b` feat(queue): add every video of a YouTube playlist as separate queue items
+  - Also contains parts of BC6 in `whisper_core.py` and `queue_manager.py` (produced files tracking), BC7 in `gradio_app.py` (theme toggle UI), and BC8 in `whisper_core.py` (Google Drive download handling) that could not be split cleanly.
+- `ce2951c` feat(output): JOIN into one document and ZIP the batch results
+  - Also contains parts of BC8 in `utils.py` (shared `_url_cache_dir` helper used for ZIP cache exclusion) that could not be split cleanly.
+- `48f457c` feat(ui): light and dark theme toggle
+  - The theme toggle UI lives in `gradio_app.py`, which was committed in BC5 because it could not be split cleanly.
+- `f8fe8db` feat(input): accept shared Google Drive links
+  - The Google Drive download logic lives in `whisper_core.py`, which was committed in BC5 because it could not be split cleanly.
+
+### Verification results
 - AST check: all `.py` files parse without syntax errors — `AST OK`.
 - `test_queue.py`: 29/29 passed.
 - `test_url_pipeline.py`: 21/21 passed.
+- `git diff --check`: clean (no whitespace errors).
+- No leftover `check_bc*.py` scripts.
+
+### What was not done
+- GUI runtime verification (requires manual owner testing with real media/playlists).
+- Full transcription + translation + Google Drive end-to-end smoke test (requires Faster-Whisper-XXL, API keys, and/or public Drive links).
+- Spotify input support (explicitly out of scope; see `docs/USAGE.md`).
+- Authorized/personal Google Drive access via OAuth (explicitly out of scope).
+- Nothing was pushed.
+
+### Risks
+- Playlist expansion happens at the start of `run_transcription`; very large playlists or slow `yt-dlp` metadata calls can briefly block the Gradio event loop.
+- `_output_title_for_item` now prefers cached metadata; if `playlist_title` is stale or a non-string, it falls back to a live metadata fetch, which may still add latency.
+- `join_batch_results` infers language from filename tokens (`_EN`, `_HE`, `_RU`, `_TRANSLATED_<LANG>`); files without these markers are grouped under `batch_JOINED_UNKNOWN.txt`.
+- `zip_batch_results` excludes files inside `_url_cache_dir()` by path prefix; any legitimate output placed under that directory will be omitted from the archive.
+- The light theme is applied via CSS class on `document.body`; third-party Gradio components that do not inherit CSS variables may not switch correctly.
 
 ---
 
