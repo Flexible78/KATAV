@@ -316,18 +316,16 @@ def process_logs(current_log: str):
         lines = new_text.split('\n')
         if len(lines) > 15: new_text = '\n'.join(lines[-15:])
 
-    # Update batch_queue from [PROGRESS_FILE] lines for live progress tracking
-    running_item = batch_queue.get_running_item()
-    if running_item and batch_items:
-        for bi in batch_items:
-            qi = batch_queue.get_item(bi['idx'])
-            if qi:
-                if bi['status'] == 'running' and qi.status != 'running':
-                    batch_queue.mark_item_running(qi.idx)
-                elif bi['status'] == 'done' and qi.status == 'running':
-                    batch_queue.mark_item_done(qi.idx)
-                elif bi['status'] == 'failed' and qi.status == 'running':
-                    batch_queue.mark_item_failed(qi.idx, bi.get('error', ''))
+    # Build batch panel directly from queue manager state (read-only observer)
+    bg_items = batch_queue.get_items()
+    batch_items = [
+        {'idx': qi.idx, 'name': qi.name, 'status': qi.status, 'total': len(bg_items),
+         'error': qi.error, 'source': qi.source, 'duration': qi.duration}
+        for qi in bg_items
+    ]
+    batch_total = len(bg_items)
+    batch_completed = batch_queue.get_completed_count()
+    batch_failed = batch_queue.get_failed_count()
 
     file_progress_html = ""
     if current_file_action:

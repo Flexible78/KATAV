@@ -404,6 +404,39 @@ def run_transcription(
         return gr.update(value="Error: No files found!"), gr.update(value=[]), gr.update(elem_classes=["status-error"]), "", "", ""
     
     process_active = True
+    batch_queue.mark_started()
+    current_queue_item = None
+
+    def _find_queue_item(path: str):
+        """Find the QueueItem whose current path matches the given local path."""
+        norm = os.path.normcase(os.path.abspath(path))
+        for qi in batch_queue.get_items():
+            if os.path.normcase(os.path.abspath(qi.path_or_url)) == norm:
+                return qi
+        return None
+
+    def _read_whisper_output_and_track(process, item_idx: int):
+        """Stream Whisper stdout, forward to log queue, and update item progress."""
+        try:
+            for raw_line in process.stdout:
+                line = utils.strip_ansi(raw_line)
+                log_queue.put(line + ("\n" if not line.endswith("\n") else ""))
+                # Parse percent from lines like: 89% | 728/818 | ...
+                match = re.search(r"(\d+(?:\.\d+)?)%\s*\|\s*\d+\/\d+", line)
+                if match:
+                    try:
+                        percent = float(match.group(1))
+                        batch_queue.update_item_progress(item_idx, percent)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        finally:
+            try:
+                process.stdout.close()
+            except Exception:
+                pass
+
     all_downloadable_files = []
     all_clean_text = ""
     processed_srt_paths = [] 
@@ -444,7 +477,11 @@ def run_transcription(
             full_whisper_log = "" 
             base_name = os.path.splitext(os.path.basename(video_path))[0]
             log_queue.put(f"\n🚜 [BATCH {idx+1}/{len(files_to_process)}] Processing: {base_name}\n")
-            log_queue.put(f"[PROGRESS_FILE] | {idx+1} | {total_files} | {base_name} | running\n")
+
+            current_queue_item = _find_queue_item(video_path)
+            if current_queue_item is not None:
+                batch_queue.mark_item_running(current_queue_item.idx)
+            log_queue.put(f"[PROGRESS_FILE] | {current_queue_item.idx if current_queue_item else idx+1} | {total_files} | {base_name} | running\n")
             
             if use_custom_output and output_dir.strip(): current_out_dir = output_dir.strip()
             elif "Temp" in video_path or "temp" in video_path: current_out_dir = DEFAULT_OUTPUT_DIR
@@ -478,8 +515,10 @@ def run_transcription(
                 log_queue.put(f"[CMD] {i}: {cmd_part}\n")
 
             current_process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace', bufsize=1, shell=False, creationflags=creationflags, env=env)
-            threading.Thread(target=enqueue_output, args=(current_process.stdout, log_queue), daemon=True).start()
-            current_process.wait() 
+            threading.Thread(target=_read_whisper_output_and_track, args=(current_process, current_queue_item.idx if current_queue_item else idx+1), daemon=True).start()
+            current_process.wait()
+            if current_queue_item is not None:
+                batch_queue.update_item_progress(current_queue_item.idx, 100.0) 
             if idx < len(files_to_process) - 1 and WHISPER_COOLDOWN_SEC > 0:
                 log_queue.put(f"❄️ Cooling down {WHISPER_COOLDOWN_SEC}s...\n")
                 if interruptible_sleep(float(WHISPER_COOLDOWN_SEC)): break
@@ -548,13 +587,17 @@ def run_transcription(
                     all_clean_text += f"\n--- {base_name} ---\n" + "\n".join([line for line in clean_text_result.split('\n') if line.strip()]) + "\n"
                 except: pass
             
-            log_queue.put(f"[PROGRESS_FILE] | {idx+1} | {total_files} | {base_name} | done\n")
+            if current_queue_item is not None:
+                batch_queue.mark_item_done(current_queue_item.idx)
+            log_queue.put(f"[PROGRESS_FILE] | {current_queue_item.idx if current_queue_item else idx+1} | {total_files} | {base_name} | done\n")
             
         final_status = gr.update(elem_classes=["status-error"]) if stop_requested else gr.update(elem_classes=["status-done"])
         if not stop_requested: log_queue.put(f"\n✅ BATCH DONE! Files processed: {len(processed_srt_paths)}\n")
 
     except Exception as e:
         log_queue.put(f"\n⚠️ ERROR: {e}\n")
+        if current_queue_item is not None:
+            batch_queue.mark_item_failed(current_queue_item.idx, str(e))
         final_status = gr.update(elem_classes=["status-error"])
     finally:
         _gpu_power_limit_restore(_prev_gpu_power)
