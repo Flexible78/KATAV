@@ -6,7 +6,7 @@ import time
 import shutil
 import sys
 from pathlib import Path
-from typing import List, Tuple, Any
+from typing import List, Tuple, Any, Dict
 import gradio as gr
 
 import utils
@@ -179,12 +179,14 @@ def _url_cache_dir() -> str:
 
 def _download_url_to_queue(
     url: str, output_dir: str, cookie_browser: str,
-    files_to_process: List[Any], downloaded_audio_files: List[Any],
+    files_to_process: List[Any],
     item_idx: int = None,
 ) -> str:
     """Download a single URL via yt-dlp CLI (subprocess), stream output, and queue the result.
 
-    Returns the path to the downloaded/cached audio file, or an empty string on failure.
+    Downloaded audio is cached in Outputs/_url_cache for reuse across runs and is
+    intentionally not treated as temporary. Returns the path to the downloaded/cached
+    audio file, or an empty string on failure.
     """
     original_url = url
     url = utils.canonical_media_url(url)
@@ -345,7 +347,7 @@ def run_transcription(
     global_out_dir = get_actual_output_dir(manual_path, use_custom_output, output_dir)
     if use_custom_output: os.makedirs(global_out_dir, exist_ok=True)
 
-    downloaded_audio_files = []
+
     urls_input = (urls_input or "").strip()
     if urls_input:
         if not YT_DLP_AVAILABLE:
@@ -387,7 +389,7 @@ def run_transcription(
                     try:
                         _download_url_to_queue(
                             url, global_out_dir, cookie_browser,
-                            files_to_process, downloaded_audio_files,
+                            files_to_process,
                             item_idx=item.idx if item else None
                         )
                     except Exception as dl_exc:
@@ -558,12 +560,7 @@ def run_transcription(
         _gpu_power_limit_restore(_prev_gpu_power)
         process_active = False; current_process = None
         current_action = "Stopped" if stop_requested else "Done"
-        if downloaded_audio_files:
-            log_queue.put("\n🧹 Cleaning up temporary files...\n")
-            for f in downloaded_audio_files:
-                try:
-                    if os.path.exists(f): os.remove(f)
-                except: pass
+
 
     # Ensure unique, stable handoff list (preserve order, no duplicates)
     seen_paths = []

@@ -608,6 +608,34 @@ When in doubt:
 
 ---
 
+## 2026-07-26 - KATAV follow-up: typing import fix + dead-code cleanup + URL pipeline tests (model: Kimi K2.7)
+- Fixed `NameError` in `whisper_core.py`: `Dict` was used in the type hint of
+  `_get_playlist_entries` but not imported from `typing`.
+- Removed dead `downloaded_audio_files` parameter/list/cleanup loop in
+  `_download_url_to_queue` and `run_transcription`; the URL cache in
+  `Outputs/_url_cache` is intentionally retained for reuse.
+- Updated the docstring of `_download_url_to_queue` to document the cache reuse
+  policy.
+- Added `test_url_pipeline.py` with 14 non-GUI unit tests for the YouTube/URL
+  pipeline: `utils.canonical_media_url`, `whisper_core._get_playlist_entries`,
+  and `whisper_core._download_url_to_queue`. Tests use `unittest.mock` for
+  `yt-dlp`, `subprocess.Popen`, and filesystem helpers; no real network calls.
+- All 25 `test_queue.py` tests + 14 `test_url_pipeline.py` tests pass; all
+  `.py` files compile.
+
+## 2026-07-26 - KATAV YouTube pipeline fixes Y1-Y6 (model: Kimi K2.7)
+- Y1: URLs are canonicalised to watch?v=<id>; --no-playlist now applied to the
+  real download call, not only the metadata probe.
+- Y2: audio-only download to Outputs/_url_cache as <id>.mp3 with a verified,
+  non-guessed output path and a reuse cache.
+- Y3: per-URL failure isolation, ANSI stripping, actionable sign-in message,
+  cookies-from-browser actually wired into the download.
+- Y4: downloaded audio is handed to the transcription stage; real playlists are
+  expanded into separate queue items; duration filled from the downloaded file.
+- Y5: ADD URL no longer blocks the Gradio request thread.
+- Y6: Whisper subprocess arguments are built as a list, fixing
+  "Invalid path -> --threads".
+
 ## 2026-07-26 - KATAV fixes K1-K10
 - K1 startup: add_file ran a 15s ffprobe per file and add_url ran yt_dlp.extract_info with no
   timeout, both inside prepare_start before any log line. Probes are now non-blocking and the
