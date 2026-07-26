@@ -50,10 +50,12 @@ def load_keys_safe() -> dict:
 
 current_action = "Waiting..."
 current_percent = 0
-current_file_action = ""
-current_file_percent = 0
 time_elapsed = "00:00"
 time_remaining = "00:00"
+transcribe_percent = 0
+translate_percent = 0
+translation_seen = False
+current_phase = "idle"
 audio_speed = "0.00x"
 full_whisper_log = ""
 
@@ -123,9 +125,11 @@ def prepare_start(
     cookie_browser_val: str = "None"
 ):
     global batch_items, batch_total, batch_completed, batch_failed, batch_current_name, batch_current_idx
+    global transcribe_percent, translate_percent, translation_seen, current_phase
     utils.stop_requested = False
     batch_items = []; batch_total = 0; batch_completed = 0; batch_failed = 0
     batch_current_name = ""; batch_current_idx = 0
+    transcribe_percent = 0; translate_percent = 0; translation_seen = False; current_phase = "idle"
 
     # Persist cookie browser choice
     ui_state.save_settings({"whisper_cookie_browser": cookie_browser_val})
@@ -200,13 +204,15 @@ def eco_preset():
         gr.update(value=True),             # use_vad_filter
     )
 
+
 def process_logs(current_log: str):
     global current_percent, time_elapsed, time_remaining, audio_speed, full_whisper_log, current_action
-    global current_file_percent, current_file_action
+    global transcribe_percent, translate_percent, translation_seen, current_phase
     global batch_items, batch_total, batch_completed, batch_failed, batch_current_name, batch_current_idx
     
     new_text = current_log or ""
     lines_added = False
+    
     
     try:
         while not log_queue.empty():
@@ -220,15 +226,22 @@ def process_logs(current_log: str):
                     utils.log_queue.put(f"[STAGE] Model ready in {load_elapsed:.1f}s\n")
                     utils.log_queue.put("[STAGE] Transcription started\n")
                     utils.model_load_start_time = 0.0
-                current_percent = int(progress["percent"])
+                current_phase = "transcribe"
+                transcribe_percent = int(progress["percent"])
+                current_percent = transcribe_percent
                 time_elapsed = format_duration(progress["elapsed_seconds"])
                 time_remaining = format_duration(progress["remaining_seconds"])
                 audio_speed = f"{progress['speed']:.2f}x"
-                current_action = "Transcription"
+                file_num = batch_current_idx if batch_current_idx > 0 else 1
+                file_total = max(batch_total, 1)
+                current_action = f"TRANSCRIBE - file {file_num}/{file_total} - {transcribe_percent}%"
 
-            # ── AI Translation progress (K7: extended chunk info) ──
+
+            # ── AI Translation progress (weighted: 30% of full cycle) ──
             match_t = re.search(r'\[PROGRESS_TRANS\] \| (\d+) \| (\d+) \| (\d+)(?: \| (\d+) \| (\d+) \| (\w+) \| (\d+) \| (\d+) \| (.+))?', line)
             if match_t:
+                current_phase = "translate"
+                translation_seen = True
                 req_done = int(match_t.group(1))
                 req_total = int(match_t.group(2))
                 e_sec = int(match_t.group(3))
@@ -236,13 +249,14 @@ def process_logs(current_log: str):
                 if rich and match_t.group(9):
                     file_idx = int(match_t.group(4)) + 1
                     total_files = int(match_t.group(5))
-                    lang_code = match_t.group(6)
+                    lang_code = match_t.group(6).upper()
                     chunk_idx = int(match_t.group(7)) + 1
                     total_chunks = int(match_t.group(8))
-                    current_action = f"AI TRANSLATION (file {file_idx}/{total_files} | {lang_code} | chunk {chunk_idx}/{total_chunks})"
+                    current_action = f"TRANSLATE - file {file_idx}/{total_files} - {lang_code} - chunk {chunk_idx}/{total_chunks}"
                 else:
-                    current_action = f"AI TRANSLATION ({req_done}/{req_total})"
-                current_percent = int((req_done / req_total) * 100) if req_total > 0 else 100
+                    current_action = f"TRANSLATE ({req_done}/{req_total})"
+                translate_percent = int((req_done / req_total) * 100) if req_total > 0 else 100
+                current_percent = translate_percent
                 time_elapsed = f"{e_sec//60:02d}:{e_sec%60:02d}"
                 r_sec = int((e_sec / req_done) * (req_total - req_done)) if req_done > 0 else 0
                 time_remaining = f"{r_sec//60:02d}:{r_sec%60:02d}"
@@ -279,9 +293,6 @@ def process_logs(current_log: str):
                         if running:
                             batch_current_name = running.name
                             batch_current_idx = running.idx
-                            current_file_action = f"{running.source.upper()} ({running.idx}/{batch_total})"
-                            if running.duration > 0:
-                                current_file_percent = int((running.processed_seconds / running.duration) * 100) if running.duration > 0 else 0
                 continue
 
             match_f = re.search(r'\[PROGRESS_FILE\] \| (\d+) \| (\d+) \| (.+?) \| (\w+)(?: \| (.+))?', line)
@@ -302,11 +313,9 @@ def process_logs(current_log: str):
                     batch_items.append({'idx': f_idx, 'name': f_name, 'status': f_status, 'total': f_total, 'error': f_error})
                 if f_status == 'running':
                     batch_current_name = f_name; batch_current_idx = f_idx
-                    current_file_action = f"FILE ({f_idx}/{f_total})"
                 elif f_status in ('done', 'failed'):
                     batch_completed = sum(1 for i in batch_items if i['status'] == 'done')
                     batch_failed = sum(1 for i in batch_items if i['status'] == 'failed')
-                current_file_percent = int((f_idx / f_total) * 100) if f_total > 0 else 100
                 continue
 
             new_text += line
@@ -329,21 +338,7 @@ def process_logs(current_log: str):
     batch_completed = batch_queue.get_completed_count()
     batch_failed = batch_queue.get_failed_count()
 
-    file_progress_html = ""
-    if current_file_action:
-        running = batch_queue.get_running_item()
-        cur_file_dur = format_duration(running.duration) if (running and running.duration > 0) else "??:??"
-        file_progress_html = f"""
-        <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #3f3f46;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-                <span style="font-weight: 700; font-size: 12px; color: #f4f4f5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 70%;" title="{running.name if running else ''}">{running.name if running else current_file_action}</span>
-                <span style="font-size: 10px; color: #a1a1aa; white-space: nowrap;">{current_file_action} | Dur: {cur_file_dur}</span>
-            </div>
-            <div style="width: 100%; background-color: #18181b; border-radius: 4px; overflow: hidden; height: 8px; border: 1px solid #27272a;">
-                <div style="width: {current_file_percent}%; height: 100%; background: linear-gradient(90deg, #2563eb, #3b82f6); transition: width 0.3s ease;"></div>
-            </div>
-        </div>
-        """
+    # Per-file progress is now merged into the single weighted bar above.
 
     # Build enhanced queue panel (E4: selective removal, E3: File/URL badges)
     batch_panel_html = ""
@@ -390,20 +385,25 @@ def process_logs(current_log: str):
     if batch_queue.get_running_item():
         time_elapsed = elapsed_display
 
-    overall_pct = int(((batch_completed + batch_failed) / max(batch_total, 1)) * 100) if batch_total > 0 else current_percent
-
-    # Single-file mode: hide batch-level header/progress bar to avoid duplicated info.
-    single_item_mode = (batch_total == 1)
-    if single_item_mode:
-        batch_header_html = ""
-        overall_progress_html = ""
+    # Weighted single bar: TRANSCRIBE 70% / TRANSLATE 30%.
+    # Subtitles-only mode is detected automatically: if translation never appears,
+    # the transcription phase uses the full 0-100% range.
+    if current_phase == "translate":
+        overall_pct = 70 + int((translate_percent / 100) * 30)
+    elif current_phase == "transcribe":
+        if translation_seen:
+            overall_pct = int((transcribe_percent / 100) * 70)
+        else:
+            overall_pct = transcribe_percent
     else:
-        batch_header_html = f"""        <div style="display: flex; justify-content: space-between; margin-bottom: 6px; font-weight: bold; font-size: 14px; color: #f4f4f5; text-transform: uppercase;">
+        overall_pct = int(((batch_completed + batch_failed) / max(batch_total, 1)) * 100) if batch_total > 0 else current_percent
+
+    batch_header_html = f"""        <div style="display: flex; justify-content: space-between; margin-bottom: 6px; font-weight: bold; font-size: 14px; color: #f4f4f5; text-transform: uppercase;">
             <span>{current_action}</span>
             <span style="color: #ea580c;">{overall_pct}%</span>
             <span style="font-size:10px;color:#71717a;font-weight:normal;">{batch_completed + batch_failed}/{max(batch_total,1)}</span>
         </div>"""
-        overall_progress_html = f"""        <div style="width: 100%; background-color: #18181b; border-radius: 6px; overflow: hidden; height: 18px; border: 1px solid #27272a; margin-bottom: 8px;">
+    overall_progress_html = f"""        <div style="width: 100%; background-color: #18181b; border-radius: 6px; overflow: hidden; height: 18px; border: 1px solid #27272a; margin-bottom: 8px;">
             <div style="width: {overall_pct}%; height: 100%; background: linear-gradient(90deg, #9a3412, #ea580c); transition: width 0.3s ease;"></div>
         </div>"""
 
@@ -417,7 +417,7 @@ def process_logs(current_log: str):
             <div style="text-align:center;"><div style="font-size:9px;color:#71717a;text-transform:uppercase;">Speed</div><div style="color:#34d399;font-family:monospace;font-size:13px;font-weight:700;">{audio_speed}</div></div>
             <div style="text-align:center;"><div style="font-size:9px;color:#71717a;text-transform:uppercase;" title="Total duration of all known items in the queue.">Total Audio</div><div style="color:#a78bfa;font-family:monospace;font-size:13px;font-weight:700;">{batch_dur_display}</div></div>
         </div>
-        {file_progress_html}{batch_panel_html}{shutdown_html}
+        {batch_panel_html}{shutdown_html}
     </div>
     """
     return new_text, metrics_html
