@@ -829,13 +829,14 @@ def build_app():
             if not re.match(r'^https?://', new_url):
                 gr.Warning(f"Invalid URL: {new_url[:80]}")
                 return current_urls or "", new_url
-            # Normalize: remove trailing slash
-            new_norm = new_url.rstrip("/")
+            # Normalise to a canonical media URL for stable deduplication
+            new_canonical = utils.canonical_media_url(new_url)
+            new_norm = new_canonical.rstrip("/")
             existing = (current_urls or "").strip()
-            existing_urls = [u.strip().rstrip("/") for u in existing.split('\n') if u.strip()]
+            existing_urls = [u.strip() for u in existing.split('\n') if u.strip()]
             # Check if already in list
             for eu in existing_urls:
-                if eu == new_norm:
+                if utils.canonical_media_url(eu).rstrip("/") == new_norm:
                     gr.Info(f"Already in list: {new_url[:60]}")
                     return current_urls or "", ""
             # Check batch_queue
@@ -854,7 +855,7 @@ def build_app():
             else:
                 _utils.log_queue.put(f"[QUEUE] URL added: {new_url[:120]}\n")
 
-            # Append
+            # Append the original user input (canonicalisation happens at download time)
             if existing:
                 return existing + "\n" + new_url, ""
             return new_url, ""

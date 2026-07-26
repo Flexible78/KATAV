@@ -9,6 +9,7 @@ import time
 import json
 import re
 from typing import Dict, Any, Tuple
+from urllib.parse import urlparse, parse_qs
 import gradio as gr
 
 from config import CONFIG_FILE, DEFAULT_OUTPUT_DIR
@@ -218,6 +219,49 @@ def unique_path(path: str) -> str:
     import datetime
     timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
     return f"{base}_{timestamp}{ext}"
+
+
+def strip_ansi(text: str) -> str:
+    """Remove ANSI escape sequences from text."""
+    if not text:
+        return text
+    return re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", text)
+
+
+def canonical_media_url(url: str) -> str:
+    """
+    Canonicalise a media URL.
+
+    - youtube.com/watch and youtu.be -> https://www.youtube.com/watch?v=<id>
+    - /playlist?list= links are returned unchanged
+    - non-YouTube URLs are returned unchanged
+    - never raises; on parse problems returns the input unchanged
+    """
+    if not isinstance(url, str):
+        return url
+    try:
+        parsed = urlparse(url.strip())
+        netloc = parsed.netloc.lower()
+        if netloc in ("youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be", "www.youtu.be"):
+            # Genuine playlist request
+            if parsed.path in ("/playlist", "/playlist/") or parsed.path.startswith("/playlist"):
+                return url
+            # youtube.com/watch?v=...
+            if parsed.path in ("/watch", "/watch/") or parsed.path.endswith("/watch"):
+                qs = parse_qs(parsed.query)
+                v_list = qs.get("v")
+                if v_list:
+                    return f"https://www.youtube.com/watch?v={v_list[0]}"
+                return url
+            # youtu.be/<id>
+            if netloc in ("youtu.be", "www.youtu.be"):
+                segments = [s for s in parsed.path.strip("/").split("/") if s]
+                if segments:
+                    return f"https://www.youtube.com/watch?v={segments[0]}"
+                return url
+        return url
+    except Exception:
+        return url
 
 
 def process_logs(current_log: str) -> Tuple[str, str]:

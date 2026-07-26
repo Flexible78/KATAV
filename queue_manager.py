@@ -70,6 +70,7 @@ def _get_url_duration(url: str) -> float:
     """Attempt to get duration for a URL via yt-dlp (download=False). Returns -1 on failure."""
     try:
         import yt_dlp
+        url = utils.canonical_media_url(url)
         ydl_opts = {
             "quiet": True,
             "no_warnings": True,
@@ -252,23 +253,24 @@ class QueueManager:
         url = url.strip()
         if not url:
             return None
+        canonical = utils.canonical_media_url(url)
         # Normalize: remove trailing slash (harmless)
-        url_norm = url.rstrip("/")
+        url_norm = canonical.rstrip("/")
         with self._lock:
             for it in self._items:
                 if it.source == "url" and it.path_or_url.rstrip("/") == url_norm:
                     return None
             # Validate URL
-            if not re.match(r"^https?://", url):
+            if not re.match(r"^https?://", canonical):
                 return None  # caller should show error
-            short_name = url
+            short_name = canonical
             if len(short_name) > 50:
                 short_name = short_name[:47] + "..."
             item = QueueItem(
                 idx=self._next_idx,
                 source="url",
                 name=short_name,
-                path_or_url=url,
+                path_or_url=canonical,
                 duration=-1.0,
                 metadata={"full_url": url, "duration_known": False},
             )
@@ -276,7 +278,7 @@ class QueueManager:
             self._next_idx += 1
         # Resolve duration in background; never block on this.
         def _probe():
-            dur = _get_url_duration(url)
+            dur = _get_url_duration(canonical)
             if dur > 0:
                 with self._lock:
                     item.duration = dur

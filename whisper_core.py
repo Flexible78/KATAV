@@ -60,6 +60,10 @@ def _download_url_to_queue(
     files_to_process: List[Any], downloaded_audio_files: List[Any]
 ):
     """Download a single URL via yt-dlp CLI (subprocess), stream output, and queue the result."""
+    original_url = url
+    url = utils.canonical_media_url(url)
+    if url != original_url:
+        log_queue.put(f"[URL] Normalised: {original_url} -> {url}\n")
     log_queue.put(f"⬇️ Downloading: {url}\n")
 
     is_playlist = "/playlist?" in url or "list=" in url
@@ -69,12 +73,11 @@ def _download_url_to_queue(
     cmd = [
         sys.executable, "-m", "yt_dlp",
         "--no-warnings",
+        "--no-playlist",
         "-f", "bestaudio/best",
         "-o", "%(title)s.%(ext)s",
         "--progress",
     ]
-    if not is_playlist:
-        cmd.append("--no-playlist")
     if cookie_browser and cookie_browser != "None":
         cmd.extend(["--cookies-from-browser", cookie_browser])
     cmd.append(url)

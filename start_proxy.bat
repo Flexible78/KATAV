@@ -9,7 +9,7 @@ echo ==========================================
 echo.
 
 :: Run the script from the libs folder
-python libs\Start1.py
+.venv\Scripts\python.exe libs\Start1.py
 
 :: If the script crashes, the window will not close immediately so you can see the error
 echo.
