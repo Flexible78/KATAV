@@ -62,8 +62,18 @@ def _get_file_duration(filepath: str) -> float:
         )
         if result.returncode == 0 and result.stdout.strip():
             return float(result.stdout.strip())
-    except Exception:
-        pass
+        elif result.returncode != 0:
+            stderr_tail = result.stderr.strip().split('\n')[-3:] if result.stderr else []
+            log.warning(
+                "ffprobe exited %d for %r: cmd=%r | stderr=%s",
+                result.returncode, filepath,
+                "ffprobe -v error -show_entries format=duration ...",
+                " | ".join(stderr_tail) if stderr_tail else "<none>",
+            )
+    except FileNotFoundError:
+        log.warning("ffprobe not found — install ffmpeg to get media durations")
+    except Exception as e:
+        log.debug("ffprobe failed for %r: %s", filepath, e)
     return -1.0
 
 

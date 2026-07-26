@@ -631,9 +631,19 @@ def run_transcription(
             for i, cmd_part in enumerate(command):
                 log_queue.put(f"[CMD] {i}: {cmd_part}\n")
 
-            current_process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace', bufsize=1, shell=False, creationflags=creationflags, env=env)
+            current_process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='replace', bufsize=1, shell=False, creationflags=creationflags, env=env)
             threading.Thread(target=_read_whisper_output_and_track, args=(current_process, current_queue_item.idx if current_queue_item else idx+1), daemon=True).start()
+            # Collect stderr separately for diagnostics on failure
+            stderr_lines_list = []
+            def _read_stderr():
+                try:
+                    for raw_line in current_process.stderr:
+                        stderr_lines_list.append(utils.strip_ansi(raw_line).rstrip())
+                except Exception:
+                    pass
+            threading.Thread(target=_read_stderr, daemon=True).start()
             current_process.wait()
+            whisper_rc = current_process.returncode
             if current_queue_item is not None:
                 batch_queue.update_item_progress(current_queue_item.idx, 100.0) 
             if idx < len(files_to_process) - 1 and WHISPER_COOLDOWN_SEC > 0:
@@ -692,7 +702,7 @@ def run_transcription(
                 try:
                     import ffmpeg
                     audio_path = os.path.join(current_out_dir, f"{base_name}.mp3")
-                    (
+                    cmd_result = (
                         ffmpeg
                         .input(video_path)
                         .output(audio_path, acodec='libmp3lame', audio_bitrate='192k')
@@ -705,7 +715,18 @@ def run_transcription(
                 except ImportError:
                     log_queue.put("⚠️ To save audio tracks install: pip install ffmpeg-python\n")
                 except Exception as e:
-                    log_queue.put(f"❌ Audio extraction error: {e}\n")
+                    # Capture ffmpeg stderr from the exception if available
+                    stderr_info = ""
+                    if hasattr(e, 'stderr') and e.stderr:
+                        try:
+                            stderr_text = e.stderr.decode('utf-8', errors='replace') if isinstance(e.stderr, bytes) else str(e.stderr)
+                            stderr_lines = stderr_text.strip().split('\n')
+                            stderr_info = " | ".join(stderr_lines[-5:])
+                        except Exception:
+                            stderr_info = str(e.stderr)[:200]
+                    detail = f"{e} | {stderr_info}" if stderr_info else str(e)
+                    log_queue.put(f"❌ Audio extraction error ({video_path}): {detail}\n")
+                    utils.log_to_terminal(f"[FFMPEG] extraction failed for {video_path}: {detail}")
 
             all_downloadable_files.extend(current_file_downloads)
 
@@ -735,7 +756,15 @@ def run_transcription(
             log_queue.put(f"[PROGRESS_FILE] | {current_queue_item.idx if current_queue_item else idx+1} | {total_files} | {base_name} | done\n")
             
         final_status = gr.update(elem_classes=["status-error"]) if stop_requested else gr.update(elem_classes=["status-done"])
-        if not stop_requested: log_queue.put(f"\n✅ BATCH DONE! Files processed: {len(processed_srt_paths)}\n")
+        # ── Honest batch summary (BD11) ──
+        ok_count = batch_queue.get_completed_count()
+        failed_count = batch_queue.get_failed_count()
+        skipped_count = batch_queue.get_total_items() - ok_count - failed_count
+        if failed_count > 0 or skipped_count > 0:
+            log_queue.put(f"\nBATCH DONE. ok: {ok_count} | failed: {failed_count} | skipped: {skipped_count}\n")
+            final_status = gr.update(elem_classes=["status-error"])
+        elif not stop_requested:
+            log_queue.put(f"\n✅ BATCH DONE. ok: {ok_count} | failed: 0 | skipped: 0\n")
 
     except Exception as e:
         log_queue.put(f"\n⚠️ ERROR: {e}\n")
@@ -748,10 +777,11 @@ def run_transcription(
         current_action = "Stopped" if stop_requested else "Done"
 
 
-    # Ensure unique, stable handoff list (preserve order, no duplicates)
+    # Ensure unique, stable handoff list (preserve order, no duplicates).
+    # Only include real, existing, non-empty files (BD11).
     seen_paths = []
     for p in processed_srt_paths:
-        if p not in seen_paths:
+        if p not in seen_paths and os.path.isfile(p) and os.path.getsize(p) > 0:
             seen_paths.append(p)
     produced_text_paths = seen_paths
 
