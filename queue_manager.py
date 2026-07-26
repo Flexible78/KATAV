@@ -446,6 +446,33 @@ class QueueManager:
                         it.name = name
                     break
 
+    def replace_item_with_playlist_entries(self, idx: int, entries: List[Dict[str, Any]]) -> List[int]:
+        """Replace a playlist queue item with individual video items, preserving order."""
+        with self._lock:
+            for i, it in enumerate(list(self._items)):
+                if it.idx == idx:
+                    self._items.pop(i)
+                    new_items = []
+                    insert_pos = i
+                    for entry in entries:
+                        entry_url = entry.get("url", "")
+                        entry_title = entry.get("title", "") or entry_url
+                        canonical = utils.canonical_media_url(entry_url)
+                        item = QueueItem(
+                            idx=self._next_idx,
+                            source="url",
+                            name=entry_title[:80],
+                            path_or_url=canonical,
+                            duration=-1.0,
+                            metadata={"full_url": entry_url, "duration_known": False},
+                        )
+                        self._items.insert(insert_pos, item)
+                        new_items.append(item)
+                        self._next_idx += 1
+                        insert_pos += 1
+                    return [it.idx for it in new_items]
+            return []
+
     def set_cancelled(self):
         with self._lock:
             self._cancelled = True

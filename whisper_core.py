@@ -51,6 +51,110 @@ def _gpu_power_limit_restore(prev):
         pass
 
 
+def _sanitize_filename(text: str) -> str:
+    """Sanitise a string so it can be used as a file name."""
+    if not text:
+        return "media"
+    text = re.sub(r"[<>:\"/\\\\|?*]", "_", text)
+    text = re.sub(r"\s+", "_", text)
+    text = text.strip("._")
+    return text or "media"
+
+
+def _get_url_title(url: str, cookie_browser: str = None) -> str:
+    """Best-effort metadata fetch for the video title."""
+    try:
+        import yt_dlp
+        opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "noplaylist": True,
+            "socket_timeout": 10,
+        }
+        if cookie_browser and cookie_browser != "None":
+            opts["cookiesfrombrowser"] = (cookie_browser,)
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            return (info or {}).get("title", "") or ""
+    except Exception:
+        return ""
+
+
+def _get_playlist_entries(url: str, cookie_browser: str = None) -> List[Dict[str, Any]]:
+    """Return a list of {'url': ..., 'title': ...} for each entry in a playlist."""
+    try:
+        import yt_dlp
+        opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "extract_flat": True,
+            "socket_timeout": 10,
+        }
+        if cookie_browser and cookie_browser != "None":
+            opts["cookiesfrombrowser"] = (cookie_browser,)
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            entries = (info or {}).get("entries", []) or []
+            result = []
+            for entry in entries:
+                if not entry:
+                    continue
+                entry_url = entry.get("url") or entry.get("webpage_url") or entry.get("id")
+                if not entry_url:
+                    continue
+                if not entry_url.startswith("http"):
+                    # Build a full URL from the video id
+                    entry_url = f"https://www.youtube.com/watch?v={entry_url}"
+                result.append({
+                    "url": entry_url,
+                    "title": entry.get("title", "") or entry_url,
+                })
+            return result
+    except Exception as e:
+        log_queue.put(f"❌ Failed to expand playlist {url}: {e}\n")
+        return []
+
+
+def _is_playlist_url(url: str) -> bool:
+    return "/playlist?" in url and "list=" in url
+
+
+def _copy_to_output(source_path: str, output_dir: str, title: str) -> str:
+    """Copy a cached/downloaded audio file to the normal output directory, named after the title."""
+    os.makedirs(output_dir, exist_ok=True)
+    safe = _sanitize_filename(title)
+    dest = os.path.join(output_dir, f"{safe}.mp3")
+    if os.path.abspath(source_path) == os.path.abspath(dest):
+        return dest
+    try:
+        import shutil as _shutil
+        _shutil.copy2(source_path, dest)
+    except Exception as e:
+        log_queue.put(f"⚠️ Could not copy audio to output dir: {e}\n")
+        return source_path
+    return dest
+
+
+def _get_file_duration(filepath: str) -> float:
+    """Return media duration in seconds via ffprobe, or -1 on failure."""
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe", "-v", "error",
+                "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                filepath,
+            ],
+            capture_output=True, text=True, timeout=5,
+            creationflags=0x08000000 if os.name == "nt" else 0,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return float(result.stdout.strip())
+    except Exception:
+        pass
+    return -1.0
+
+
 def _extract_youtube_id(url: str) -> str:
     """Extract the v= / youtu.be id from a canonical YouTube URL."""
     try:
@@ -96,11 +200,14 @@ def _download_url_to_queue(
     if cached_path and os.path.isfile(cached_path):
         size_mb = os.path.getsize(cached_path) / (1024 * 1024)
         log_queue.put(f"[URL] Cached audio reused: {video_id}.mp3\n")
-        files_to_process.append(cached_path)
-        downloaded_audio_files.append(cached_path)
+        title = _get_url_title(url, cookie_browser) or video_id or "media"
+        local_path = _copy_to_output(cached_path, output_dir, title)
+        files_to_process.append(local_path)
+        downloaded_audio_files.append(local_path)
         if item_idx is not None:
-            batch_queue.update_url_to_local(item_idx, cached_path, name=os.path.basename(cached_path))
-        return cached_path
+            duration = _get_file_duration(local_path)
+            batch_queue.update_url_to_local(item_idx, local_path, name=title[:80], duration=duration)
+        return local_path
 
     cmd = [
         sys.executable, "-m", "yt_dlp",
@@ -161,11 +268,15 @@ def _download_url_to_queue(
             if process.returncode == 0 and printed_path and os.path.isfile(printed_path):
                 size_mb = os.path.getsize(printed_path) / (1024 * 1024)
                 log_queue.put(f"[URL] Audio ready: {printed_path} ({size_mb:.2f} MB)\n")
-                files_to_process.append(printed_path)
-                downloaded_audio_files.append(printed_path)
+                title = _get_url_title(url, cookie_browser) or video_id or "media"
+                local_path = _copy_to_output(printed_path, output_dir, title)
+                files_to_process.append(local_path)
+                downloaded_audio_files.append(local_path)
                 if item_idx is not None:
-                    batch_queue.update_url_to_local(item_idx, printed_path, name=os.path.basename(printed_path))
-                return printed_path
+                    duration = _get_file_duration(local_path)
+                    batch_queue.update_url_to_local(item_idx, local_path, name=title[:80], duration=duration)
+                    log_queue.put(f"[STAGE] URL item resolved to local audio, starting transcription: {title}\n")
+                return local_path
             else:
                 _log_url_error(url, video_id, first_error_line)
     except Exception as e:
@@ -249,6 +360,27 @@ def run_transcription(
                 for it in batch_queue.get_items() if it.source == "url"
             }
             if urls:
+                # Expand genuine /playlist URLs into individual video queue items first.
+                expanded_urls = []
+                for url in urls:
+                    if _is_playlist_url(url):
+                        entries = _get_playlist_entries(url, cookie_browser)
+                        if entries:
+                            log_queue.put(f"[INFO] Playlist detected: {len(entries)} items queued.\n")
+                            item = url_item_map.get(utils.canonical_media_url(url))
+                            if item is not None:
+                                batch_queue.replace_item_with_playlist_entries(item.idx, entries)
+                        expanded_urls.extend([e["url"] for e in entries])
+                    else:
+                        expanded_urls.append(url)
+                urls = expanded_urls
+
+                # Rebuild the URL -> QueueItem map after expansion.
+                url_item_map = {
+                    utils.canonical_media_url(it.path_or_url): it
+                    for it in batch_queue.get_items() if it.source == "url"
+                }
+
                 log_queue.put(f"[STAGE] Downloading audio from {len(urls)} URL(s) (yt-dlp)...\n")
                 for url in urls:
                     if stop_requested: break
