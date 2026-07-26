@@ -158,7 +158,7 @@ Clicking **EXIT (app + consoles)** stops both console windows and tries to close
 | + PLAYLIST | Add a YouTube playlist URL to expand it into individual videos. |
 | JOIN | Merge all translated text files into one document per language. Requires completed batch results. |
 | ZIP | Pack produced files into a downloadable ZIP archive. Requires completed batch results. |
-| TOGGLE THEME | Switch between light and dark theme. The setting is remembered across sessions. |
+| CLEAR | Clear all source fields (URLs, file paths, and file uploads). |
 | EXIT | Stop the app and try to close the browser tab. Most browsers block programmatic tab closing, so a "KATAV stopped" page is shown when the tab cannot be closed. |
 
 **Language skip logic:** During translation, the app checks the detected source language and the file name. If either strongly suggests the file is already in one of the target languages, that language is skipped unless **TRANSLATE ANYWAY** is enabled. Enable it when you want every checked language regardless of the detected source.

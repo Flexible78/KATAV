@@ -199,6 +199,8 @@ body.katav-light .service-btn {
 .p-4 { padding: 12px !important; }
 .gradio-row { margin-bottom: 0px !important; }
 
+.options-row { flex-wrap: wrap !important; overflow-x: hidden !important; }
+
 .micro-title {
     text-align: right !important;
     font-size: 11px !important;

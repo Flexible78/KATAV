@@ -43,7 +43,7 @@ KATAV is a local-first Windows toolkit for speech recognition. Audio and video t
 | + PLAYLIST | Add a YouTube playlist URL and expand it into individual videos. |
 | JOIN | Merge all translated text files into one document per language. |
 | ZIP | Pack produced files into a downloadable ZIP archive. |
-| TOGGLE THEME | Switch between light and dark theme. |
+| CLEAR | Clear all source fields (URLs, file paths, and file uploads). |
 | EXIT | Stop the app and attempt to close the browser tab. |
 
 ## Supported sources
