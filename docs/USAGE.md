@@ -133,3 +133,11 @@ Clicking **EXIT (app + consoles)** stops both console windows and tries to close
 
 - Tick **PLAIN TEXT (no numbers, no timestamps)** before starting transcription or translation to also write a `*_CLEAN.txt` file next to every SRT or VTT output. The clean file contains the same text with block numbers, timecodes, and HTML/VTT tags removed.
 - Tick **TRANSLATE ANYWAY (ignore language auto-detection)** to force translation into every checked target language, even when the filename or the detected source language suggests the file is already in that language.
+
+---
+
+## 11. YouTube playlists, Google Drive, and Spotify
+
+- **YouTube playlists:** click **➕ ADD PLAYLIST** and paste a playlist URL. The app expands the playlist into individual video items in the background, keeps the original order, and prefixes downloaded files with `001_`, `002_`, etc. Auto-generated Mix/Radio lists (IDs starting with `RD` or `UL`) are rejected. Only the first 50 items are added at once.
+- **Google Drive:** paste a public shared link (`drive.google.com/file/d/<id>` or containing `?id=<id>`). The file is downloaded to `Outputs/_url_cache` and processed like a local file. If the link is not publicly shared, the app logs: *"Open Share -> Anyone with the link, or download the file manually."*
+- **Spotify:** Spotify audio streams are encrypted with DRM and cannot be downloaded legally. KATAV does not support Spotify. For podcasts, use the podcast's RSS feed or the same episode on YouTube instead.
