@@ -22,7 +22,7 @@ from utils import (
     log_queue, log_to_terminal, interruptible_sleep, rescue_text_from_log,
     get_actual_output_dir, process_active, current_process, current_percent,
     time_elapsed, time_remaining, audio_speed, full_whisper_log, stop_requested,
-    current_action, enqueue_output
+    current_action, enqueue_output, clean_srt_text
 )
 from ui_manager import ui_state
 from queue_manager import batch_queue
@@ -306,7 +306,7 @@ def run_transcription(
     condition_on_prev: bool, no_speech_thresh: float, use_sentence: bool,
     use_print_progress: bool, use_vad_filter: bool, use_beep_off: bool,
     use_custom_output: bool, output_dir: str, output_formats: List[str], save_audio_track: bool,
-    cookie_browser: str = "None"
+    cookie_browser: str = "None", plain_text_output: bool = False
 ) -> Tuple[gr.update, gr.update, gr.update, str, str, str]:
     global process_active, current_process, current_percent, time_elapsed, time_remaining, audio_speed, full_whisper_log, stop_requested, current_action
     
@@ -318,7 +318,8 @@ def run_transcription(
         "whisper_formats": output_formats, "whisper_sentence": use_sentence, "whisper_progress": use_print_progress,
         "whisper_vadfilter": use_vad_filter, "whisper_beep": use_beep_off,
         "whisper_save_audio_track": save_audio_track,
-        "whisper_cookie_browser": cookie_browser
+        "whisper_cookie_browser": cookie_browser,
+        "whisper_plain_text": plain_text_output
     })
 
     if process_active: return gr.update(value="⚠️ A process is already running!"), gr.update(), gr.update(), "", "", ""
@@ -508,7 +509,7 @@ def run_transcription(
             if patience != 1.0: command.extend(["--patience", str(patience)])
             if not condition_on_prev: command.extend(["--condition_on_previous_text", "False"])
             if no_speech_thresh != 0.6: command.extend(["--no_speech_threshold", str(no_speech_thresh)])
-            if vad_method != "Без VAD": command.extend(["--vad_method", vad_method])
+            if vad_method != "No VAD": command.extend(["--vad_method", vad_method])
             if use_sentence: command.append("--sentence")
             if use_print_progress: command.append("--print_progress")
             if use_vad_filter: command.extend(["--vad_filter", "True"])
@@ -542,6 +543,27 @@ def run_transcription(
                                 current_file_downloads.append(os.path.abspath(os.path.join(current_out_dir, fname)))
                                 
             current_file_downloads = list(set(current_file_downloads))
+
+            # Generate *_CLEAN.txt plain-text sidecars when requested.
+            if plain_text_output and not stop_requested:
+                clean_paths = []
+                for produced_path in current_file_downloads:
+                    if produced_path.lower().endswith(('.srt', '.vtt')):
+                        try:
+                            with open(produced_path, 'r', encoding='utf-8') as f:
+                                raw_text = f.read()
+                            clean_text = clean_srt_text(raw_text)
+                            clean_path = os.path.join(
+                                os.path.dirname(produced_path),
+                                f"{os.path.splitext(os.path.basename(produced_path))[0]}_CLEAN.txt"
+                            )
+                            with open(clean_path, 'w', encoding='utf-8') as f:
+                                f.write(clean_text)
+                            clean_paths.append(clean_path)
+                            log_queue.put(f"[CLEAN] {os.path.basename(clean_path)}\n")
+                        except Exception as e:
+                            log_queue.put(f"️ Could not create clean text for {produced_path}: {e}\n")
+                current_file_downloads.extend(clean_paths)
                 
             if stop_requested and not current_file_downloads:
                 rescued_text = rescue_text_from_log(full_whisper_log)
@@ -580,7 +602,7 @@ def run_transcription(
 
             # Collect translation-ready text/subtitle files produced for this item
             trans_exts = ('.srt', '.txt')
-            item_trans_paths = [f for f in current_file_downloads if f.lower().endswith(trans_exts) and "_TRANSLATED_" not in f and "_PARTIAL" not in f]
+            item_trans_paths = [f for f in current_file_downloads if f.lower().endswith(trans_exts) and "_TRANSLATED_" not in f and "_PARTIAL" not in f and not f.endswith("_CLEAN.txt")]
             if item_trans_paths:
                 processed_srt_paths.extend(item_trans_paths)
             else:

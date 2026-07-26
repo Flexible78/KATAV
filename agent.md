@@ -727,6 +727,35 @@ Batch of fixes for translation duplication, queue lifecycle, honest ETA, single 
 - GUI runtime verification (requires manual owner testing with real media).
 - Migration from `google.generativeai` to `google.genai` — this is a separate task; only the Google Gemini provider is affected, and the current provider code is intentionally left unchanged to avoid introducing new failures.
 
+## 2026-07-26 — BC1-BC4 (KATAV run 1, model: Kimi K2.7)
+- **BC1** — `gradio_app.py`, `docs/USAGE.md`: EXIT button label changed to `EXIT (app + consoles)` and a client-side JS handler paints a "KATAV stopped" page and tries `window.close()` before the server-side `kill_program` runs. Documented that browser security may block automatic tab closure.
+- **BC2** — `config.py`, `gradio_app.py`, `ai_translator.py`, `file_operations.py`, `dialogs.py`, `srt_processor.py`: translated system prompts and user-facing/log strings from Russian to English; centralized target-language labels/constants in `config.py` (`TARGET_LANGUAGES`, `TARGET_LANGUAGE_DEFAULTS`, `TARGET_LANGUAGE_MARKERS`, `TARGET_LANGUAGE_CODE_MAP`); UI target languages are now `Russian/English/Hebrew` with default `["English", "Hebrew"]`; removed dead duplicate `libs/ai_translator.py`.
+- **BC3** — `gradio_app.py`, `ai_translator.py`, `docs/USAGE.md`: renamed the `FORCE ALL LANGUAGES` checkbox to `TRANSLATE ANYWAY (ignore language auto-detection)` with an `info=` tooltip; log strings now reference the new label.
+- **BC4** — `gradio_app.py`, `utils.py`, `whisper_core.py`, `ai_translator.py`, `srt_processor.py`: added a visible `PLAIN TEXT (no numbers, no timestamps)` checkbox; added robust `clean_srt_text` helper in `utils.py`; wired `plain_text_output` through transcription and translation so every produced/translated SRT/VTT also writes a `*_CLEAN.txt` sidecar.
+
+### Verification
+- AST check: all `.py` files parse without syntax errors — `AST OK`.
+- `check_bc4.py` (temporary) passed for Russian, English, and Hebrew RTL samples; no `-->` or standalone numbers leaked; words not glued.
+- `test_queue.py`: 29/29 passed.
+- `test_url_pipeline.py`: 14/14 passed.
+- `libs/ai_translator.py` was removed after confirming no imports.
+
+### Commits
+- (planned) `feat(exit): tell the browser tab the app is gone and try to close it`
+- (planned) `chore(ui): make every interface and log string English`
+- (planned) `feat(ui): explain the force-translation checkbox in plain words`
+- (planned) `feat(output): PLAIN TEXT option that strips SRT numbers and timestamps`
+
+### What was not done
+- GUI runtime verification.
+- BC5-BC8 will be handled in a second run.
+
+### Risks
+- `clean_srt_text` relies on SRT-block separation (`\n\n`); unusual single-newline subtitles may need extra handling.
+- `_CLEAN.txt` sidecars are excluded from the translation-ready list, but other `.txt` outputs may still be picked up if produced.
+
+---
+
 ### Risks
 - The `cmd /c` change means launcher windows close automatically when Python exits; users must rely on `app.log` and the LIVE LOG for diagnostic messages.
 - Title-based fallback uses `taskkill /F /T /FI "WINDOWTITLE eq KATAV*"`, which could affect other windows with matching titles if any exist.

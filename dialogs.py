@@ -70,7 +70,7 @@ def read_clipboard_paths() -> str:
     return " | ".join(paths) if paths else ""
 
 def _run_tk_dialog(dialog_code: str) -> str:
-    """Изолированный запуск Tkinter в отдельном процессе"""
+    """Run a Tkinter dialog in a separate process"""
     code = f"""
 import tkinter as tk
 from tkinter import filedialog
@@ -90,14 +90,14 @@ root.attributes('-topmost', True)
         if result.stderr and result.stderr.strip():
             logging.error(f"[TK_DIALOG] stderr: {result.stderr.strip()}")
         if result.returncode != 0:
-            logging.error(f"[TK_DIALOG] Код возврата: {result.returncode}")
+            logging.error(f"[TK_DIALOG] Return code: {result.returncode}")
             return ""
         return result.stdout.strip()
     except subprocess.TimeoutExpired:
-        logging.error("[TK_DIALOG] Таймаут (120 сек)")
+        logging.error("[TK_DIALOG] Timeout (120 sec)")
         return ""
     except Exception as e:
-        logging.error(f"[TK_DIALOG] Исключение: {e}")
+        logging.error(f"[TK_DIALOG] Exception: {e}")
         return ""
 
 def open_folder_dialog() -> str:
@@ -125,23 +125,23 @@ def open_dir_srt_dialog() -> str:
 
 def save_edited_text_dialog(text: str, base_name: str, actual_out_dir: str, save_format: str = "txt") -> str:
     if not text or not text.strip(): 
-        logging.warning("[SAVE] Попытка сохранить пустой текст")
-        return "⚠️ Текст пуст!"
+        logging.warning("[SAVE] Attempt to save empty text")
+        return "⚠️ Text is empty!"
     
-    b_name = base_name.split('|')[0] if base_name else "Текст_перевода"
+    b_name = base_name.split('|')[0] if base_name else "Translated_text"
     ext = save_format if save_format else "txt"
     default_filename = f"{b_name}_EDITED.{ext}"
     
     initial_dir = actual_out_dir.replace('\\', '/') if actual_out_dir else os.path.expanduser("~").replace('\\', '/')
     
-    logging.info(f"[SAVE] Формат: {ext} | Файл: {default_filename} | Папка: {initial_dir}")
+    logging.info(f"[SAVE] Format: {ext} | File: {default_filename} | Folder: {initial_dir}")
     
     try:
         if ext == "csv":
             import csv, io
             output = io.StringIO()
             writer = csv.writer(output, quoting=csv.QUOTE_ALL)
-            writer.writerow(["№", "Текст"])
+            writer.writerow(["#", "Text"])
             for i, line in enumerate(text.strip().split('\n'), 1):
                 if line.strip():
                     writer.writerow([i, line.strip()])
@@ -161,28 +161,28 @@ def save_edited_text_dialog(text: str, base_name: str, actual_out_dir: str, save
             save_text = f"# {b_name}\n\n{text}"
         else:
             save_text = text
-        logging.info(f"[SAVE] Текст сконвертирован в {ext.upper()} ({len(save_text)} символов)")
+        logging.info(f"[SAVE] Text converted to {ext.upper()} ({len(save_text)} chars)")
     except Exception as e:
-        logging.error(f"[SAVE] Ошибка конвертации в {ext}: {e}")
-        return f"❌ Ошибка конвертации в {ext.upper()}: {e}"
+        logging.error(f"[SAVE] Conversion error to {ext}: {e}")
+        return f"❌ Conversion error to {ext.upper()}: {e}"
     
     import tempfile
     temp_path = os.path.join(tempfile.gettempdir(), f"temp_save.{ext}").replace('\\', '/')
     try:
         with open(temp_path, "w", encoding="utf-8") as f:
             f.write(save_text)
-        logging.info(f"[SAVE] Временный файл создан: {temp_path}")
+        logging.info(f"[SAVE] Temporary file created: {temp_path}")
     except Exception as e:
-        logging.error(f"[SAVE] Ошибка создания временного файла: {e}")
-        return f"❌ Ошибка записи временного файла: {e}"
+        logging.error(f"[SAVE] Temporary file creation error: {e}")
+        return f" Temporary file write error: {e}"
     
     filetypes_map = {
-        "txt": '("Текстовые файлы", "*.txt"), ("Все файлы", "*.*")',
-        "md":  '("Markdown", "*.md"), ("Все файлы", "*.*")',
-        "csv": '("CSV таблицы", "*.csv"), ("Все файлы", "*.*")',
-        "json": '("JSON файлы", "*.json"), ("Все файлы", "*.*")',
+        "txt": '("Text files", "*.txt"), ("All files", "*.*")',
+        "md":  '("Markdown", "*.md"), ("All files", "*.*")',
+        "csv": '("CSV tables", "*.csv"), ("All files", "*.*")',
+        "json": '("JSON files", "*.json"), ("All files", "*.*")',
     }
-    ft = filetypes_map.get(ext, '("Все файлы", "*.*")')
+    ft = filetypes_map.get(ext, '("All files", "*.*")')
     
     code = f'''
 import os, shutil
@@ -194,33 +194,33 @@ if res:
 else:
     print("")
 '''
-    logging.info(f"[SAVE] Открываю диалог сохранения...")
+    logging.info(f"[SAVE] Opening save dialog...")
     saved_path = _run_tk_dialog(code)
     
     try: os.remove(temp_path)
     except: pass
     
     if saved_path:
-        logging.info(f"[SAVE] ✅ Файл сохранён: {saved_path}")
-        return f"✅ Сохранено ({ext.upper()}): {saved_path}"
+        logging.info(f"[SAVE] ✅ File saved: {saved_path}")
+        return f"✅ Saved ({ext.upper()}): {saved_path}"
     
-    logging.warning("[SAVE] Пользователь отменил сохранение или произошла ошибка диалога")
-    return "⚠️ Отменено."
+    logging.warning("[SAVE] User cancelled save or dialog error occurred")
+    return "⚠️ Cancelled."
 
-# 🚀 НОВЫЕ ФУНКЦИИ ДЛЯ РАБОТЫ С СУБТИТРАМИ (SRT) НАПРЯМУЮ
+# New functions for direct SRT subtitle handling
 def copy_srt_to_clipboard(file_paths: str) -> str:
     if not file_paths: 
-        return "⚠️ Нет SRT файлов (Сначала переведите или транскрибируйте)!"
+        return "⚠️ No SRT files (translate or transcribe first)!"
     paths = [p.strip() for p in file_paths.split('|') if p.strip() and os.path.exists(p)]
     if not paths: 
-        return "⚠️ Файлы не найдены на диске!"
+        return "️ Files not found on disk!"
     try:
         content = ""
         for p in paths:
             with open(p, 'r', encoding='utf-8') as f:
                 content += f.read() + "\n\n"
         
-        # Копируем через PowerShell для поддержки огромных текстов и UTF-8
+        # Copy via PowerShell to support large texts and UTF-8
         import tempfile
         temp_path = os.path.join(tempfile.gettempdir(), "clip_srt_temp.txt").replace('\\', '/')
         with open(temp_path, 'w', encoding='utf-8') as f: f.write(content)
@@ -232,18 +232,18 @@ def copy_srt_to_clipboard(file_paths: str) -> str:
         try: os.remove(temp_path)
         except: pass
         
-        return f"📋 Скопирован текст из {len(paths)} файлов (С ТАЙМКОДАМИ)!"
+        return f"📋 Copied text from {len(paths)} files (WITH TIMECODES)!"
     except Exception as e:
-        return f"❌ Ошибка копирования: {e}"
+        return f"❌ Copy error: {e}"
 
 def save_srt_dialog(file_paths: str, actual_out_dir: str) -> str:
     if not file_paths: 
-        return "⚠️ Нет SRT файлов для сохранения!"
+        return "⚠️ No SRT files to save!"
     paths = [p.strip() for p in file_paths.split('|') if p.strip() and os.path.exists(p)]
     if not paths: 
-        return "⚠️ Файлы не найдены на диске!"
+        return "️ Files not found on disk!"
     
-    # Сохраняем первый файл из списка (обычно он один)
+    # Save the first file in the list (usually there is only one)
     path = paths[0]
     b_name = os.path.splitext(os.path.basename(path))[0]
     initial_dir = actual_out_dir.replace('\\', '/') if actual_out_dir else os.path.expanduser("~").replace('\\', '/')
@@ -259,5 +259,5 @@ else:
     print("")
 '''
     saved_path = _run_tk_dialog(code)
-    if saved_path: return f"✅ SRT сохранен: {saved_path}"
-    return "⚠️ Сохранение отменено."
+    if saved_path: return f"✅ SRT saved: {saved_path}"
+    return "⚠️ Save cancelled."

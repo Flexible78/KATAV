@@ -120,3 +120,16 @@ Translated files are named with a language suffix, for example `lecture_TRANSLAT
 - **Smaller models for long files.** A 2-hour film on `large-v2` with `float16` can take a long time and a lot of VRAM. Switch to `large-v3-turbo` or `medium` with `int8` to go faster and use less memory.
 - **GPU temperature.** If your GPU runs hot, use the **ECO** preset, lower the compute type to `int8`, or reduce the beam size. You can also cap the GPU power limit via the `WHISPER_GPU_POWER_LIMIT_W` setting in `config.py`.
 - **CPU-only machines.** Use `int8` compute with `medium` or `large-v3-turbo`. The app automatically limits CPU threads to avoid overloading your machine.
+
+---
+
+## 9. EXIT and browser tab
+
+Clicking **EXIT (app + consoles)** stops both console windows and tries to close the browser tab. Because the tab was opened by the operating system, not by JavaScript, most browsers block `window.close()` for security reasons. If the tab stays open, it shows a "KATAV stopped" page so you know it is safe to close it manually.
+
+---
+
+## 10. Plain text output and forced translation
+
+- Tick **PLAIN TEXT (no numbers, no timestamps)** before starting transcription or translation to also write a `*_CLEAN.txt` file next to every SRT or VTT output. The clean file contains the same text with block numbers, timecodes, and HTML/VTT tags removed.
+- Tick **TRANSLATE ANYWAY (ignore language auto-detection)** to force translation into every checked target language, even when the filename or the detected source language suggests the file is already in that language.

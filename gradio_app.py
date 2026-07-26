@@ -12,7 +12,8 @@ from typing import List, Any
 from config import (
     DEFAULT_OUTPUT_DIR, GOOGLE_STUDIO_MODELS, 
     LOCAL_PROXY_MODELS, OPENROUTER_MODELS, OMNIROUTE_MODELS, FREEWAY_MODELS, MISTRAL_MODELS,
-    DEFAULT_SYSTEM_PROMPT, GEMMA_SYSTEM_PROMPT, CONFIG_FILE, custom_css
+    DEFAULT_SYSTEM_PROMPT, GEMMA_SYSTEM_PROMPT, CONFIG_FILE, custom_css,
+    TARGET_LANGUAGES, TARGET_LANGUAGE_DEFAULTS,
 )
 from ui_manager import ui_state
 from utils import (
@@ -591,7 +592,7 @@ def build_app():
                 
                 with gr.Row():
                     language = gr.Dropdown(choices=["auto", "he", "ru", "en"], value=ui_state.get("whisper_language", "auto"), label="🌐 LANGUAGE")
-                    vad_method = gr.Dropdown(choices=["pyannote_v3", "silero_v3", "Без VAD"], value=ui_state.get("whisper_vad", "pyannote_v3"), label="✂️ VAD")
+                    vad_method = gr.Dropdown(choices=["pyannote_v3", "silero_v3", "No VAD"], value=ui_state.get("whisper_vad", "pyannote_v3"), label="✂️ VAD")
                 with gr.Row():
                     model_size = gr.Dropdown(choices=["large-v2", "large-v3", "large-v3-turbo", "turbo", "medium"], value=ui_state.get("whisper_model", "large-v2"), label="🧠 MODEL")
                     compute_type = gr.Dropdown(choices=["float16", "int8", "float32"], value=ui_state.get("whisper_compute", "float16"), label="⚡ COMPUTE")
@@ -614,6 +615,11 @@ def build_app():
                     save_audio_track = gr.Checkbox(label="💾 SAVE AUDIO TRACK (MP3)", value=False, elem_id="save_audio_track")
                 with gr.Row():
                     use_sentence = gr.Checkbox(label="BY SENTENCES", value=ui_state.get("whisper_sentence", True))
+                    plain_text_output = gr.Checkbox(
+                        label="PLAIN TEXT (no numbers, no timestamps)",
+                        value=ui_state.get("whisper_plain_text", False),
+                        info="Also writes a *_CLEAN.txt next to every output: subtitle numbers and time codes removed, lines merged into readable paragraphs."
+                    )
                     use_print_progress = gr.Checkbox(label="PROGRESS BAR", value=ui_state.get("whisper_progress", True))
                     use_vad_filter = gr.Checkbox(label="VAD FILTER", value=ui_state.get("whisper_vadfilter", True))
                     use_beep_off = gr.Checkbox(label="DISABLE BEEPS", value=ui_state.get("whisper_beep", True))
@@ -625,7 +631,7 @@ def build_app():
                     stop_btn = gr.Button("🛑 STOP", variant="stop", elem_id="stop_btn", elem_classes=["fixed-height-btn"])
                 with gr.Row():
                     restart_btn = gr.Button("🔄 RELOAD UI", variant="secondary", elem_classes=["fixed-height-btn"], min_width=40)
-                    exit_btn = gr.Button("🚪 EXIT", variant="secondary", elem_id="exit_btn", elem_classes=["fixed-height-btn"], min_width=40)
+                    exit_btn = gr.Button("EXIT (app + consoles)", variant="secondary", elem_id="exit_btn", elem_classes=["fixed-height-btn"], min_width=40)
 
                 with gr.Row():
                     shutdown_checkbox = gr.Checkbox(label="🔌 Shut down Windows after batch completes", value=False, elem_id="shutdown_cb")
@@ -656,8 +662,12 @@ def build_app():
                         api_provider = gr.Radio(choices=["Local Proxy (127.0.0.1)", "OmniRoute", "Freeway", "Mistral", "Google Studio (Gemma 4)", "Groq (OSS 120b)", "OpenRouter"], value=api_provider_val, label="PROVIDER")
                         translate_mode = gr.Radio(choices=["Files", "Text (from Editor)"], value="Files", label="MODE")
                         
-                    target_languages = gr.CheckboxGroup(choices=["Русский", "English", "עברית (Hebrew)"], value=ui_state.get("trans_langs", ["Русский"]), label="TARGET LANGUAGES")
-                    force_all_langs = gr.Checkbox(label="FORCE ALL LANGUAGES (ignore filename hints)", value=False)
+                    target_languages = gr.CheckboxGroup(choices=TARGET_LANGUAGES, value=ui_state.get("trans_langs", TARGET_LANGUAGE_DEFAULTS), label="TARGET LANGUAGES")
+                    force_all_langs = gr.Checkbox(
+                        label="TRANSLATE ANYWAY (ignore language auto-detection)",
+                        value=False,
+                        info="By default KATAV skips a target language when the file already looks like that language — either the filename contains a marker (RU / EN / HE / ivrit) or the detected source language matches. Tick this to translate into every checked language regardless."
+                    )
                     
                     init_key = ""
                     if api_provider_val == "OpenRouter": init_key = saved_keys.get("openrouter", "")
@@ -905,7 +915,7 @@ def build_app():
             beam_size, patience, condition_on_prev, no_speech_thresh, 
             use_sentence, use_print_progress, use_vad_filter, use_beep_off, 
             use_custom_output, output_folder, output_formats, save_audio_track,
-            cookie_browser
+            cookie_browser, plain_text_output
         ]
 
         # ── All settings for snapshot ──
@@ -918,7 +928,7 @@ def build_app():
             beam_size, patience, condition_on_prev,
             no_speech_thresh, use_sentence, use_print_progress,
             use_beep_off, use_custom_output, output_folder,
-            cookie_browser
+            cookie_browser, plain_text_output
         ]
 
         check_api_btn.click(
@@ -945,7 +955,7 @@ def build_app():
                 api_provider, api_key_input, target_languages, api_model, 
                 sys_prompt, custom_srt, srt_local_path, hidden_actual_out_dir, 
                 hidden_srt_paths, translate_mode, clean_text_output, force_all_langs,
-                language
+                language, plain_text_output
             ], 
             outputs=[translate_status, clean_text_output, hidden_srt_paths]
         )
@@ -956,7 +966,7 @@ def build_app():
                 api_provider, api_key_input, target_languages, api_model, 
                 sys_prompt, custom_srt, srt_local_path, hidden_actual_out_dir, 
                 hidden_srt_paths, translate_mode, clean_text_output, force_all_langs,
-                language
+                language, plain_text_output
             ], 
             outputs=[translate_status, clean_text_output, hidden_srt_paths]
         )
@@ -972,8 +982,16 @@ def build_app():
         
         pause_btn.click(fn=utils.toggle_pause, outputs=[pause_btn])
         stop_btn.click(fn=stop_all_processes, outputs=[log_box], queue=False)
+        _EXIT_JS = """function(){
+            var wrapper = document.createElement('div');
+            wrapper.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#18181b;color:#f4f4f5;font-family:Segoe UI,Roboto,Helvetica,Arial,sans-serif;text-align:center;"><div><h1 style="margin-bottom:0.5em;">KATAV stopped.</h1><p style="font-size:1.2em;color:#a1a1aa;">You can close this tab.</p></div></div>';
+            document.body.innerHTML = '';
+            document.body.appendChild(wrapper.firstChild);
+            setTimeout(function(){ try{ window.close(); }catch(e){} }, 300);
+            return [];
+        }"""
         restart_btn.click(fn=restart_app, js="function(){ setTimeout(() => location.reload(), 2000); }", queue=False)
-        exit_btn.click(fn=kill_program, queue=False)
+        exit_btn.click(fn=kill_program, js=_EXIT_JS, queue=False)
 
         # ── Shutdown controls (E2) ──
         def on_shutdown_toggle(checked: bool):

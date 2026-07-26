@@ -7,8 +7,11 @@ import threading
 from typing import List, Tuple, Any, Set
 import gradio as gr
 import utils 
-from config import DEFAULT_OUTPUT_DIR, DEFAULT_SYSTEM_PROMPT, GEMMA_SYSTEM_PROMPT, CONFIG_FILE
-from config import OMNIROUTE_BASE_URL, FREEWAY_BASE_URL, FREEWAY_DEFAULT_KEY, MISTRAL_BASE_URL
+from config import (
+    DEFAULT_OUTPUT_DIR, DEFAULT_SYSTEM_PROMPT, GEMMA_SYSTEM_PROMPT, CONFIG_FILE,
+    OMNIROUTE_BASE_URL, FREEWAY_BASE_URL, FREEWAY_DEFAULT_KEY, MISTRAL_BASE_URL,
+    TARGET_LANGUAGES, TARGET_LANGUAGE_MARKERS, TARGET_LANGUAGE_CODE_MAP,
+)
 from ui_manager import ui_state
 from srt_processor import chunk_text, sanitize_srt_text
 from queue_manager import batch_queue
@@ -16,11 +19,7 @@ import json
 
 
 # Normalized language detection map shared across helpers.
-_LANG_DETECT_MAP = {
-    "Русский": {"ru", "rus", "russian"},
-    "English": {"en", "eng", "english"},
-    "עברית (Hebrew)": {"he", "heb", "hebrew"},
-}
+_LANG_DETECT_MAP = TARGET_LANGUAGE_MARKERS
 
 GEMINI_READY = False
 try:
@@ -54,12 +53,10 @@ def lang_code(value: str) -> str:
         return "auto"
     if v in ("ru", "rus", "russian", "русский"):
         return "ru"
-    if v in ("en", "eng", "english", "english"):
+    if v in ("en", "eng", "english"):
         return "en"
     if v in ("he", "heb", "hebrew", "עברית"):
         return "he"
-    if v in ("р", "ру", "рussian"):
-        return "ru"
     return v
 
 
@@ -144,8 +141,9 @@ def translate_content(
     provider: str, current_api_key: str, target_langs: List[str], model_name: str,
     sys_prompt: str, custom_srt_files: List[Any], srt_local_path: str,
     hidden_actual_out_dir: str, hidden_srt_paths: str, translate_mode: str, plain_text_input: str,
-    force_all_langs: bool = False, source_language: str = "auto"
-) -> Tuple[str, str, str]: # 🚀 Возвращаем три параметра!
+    force_all_langs: bool = False, source_language: str = "auto",
+    plain_text_output: bool = False
+) -> Tuple[str, str, str]:  # return three values
     if getattr(utils, 'stop_requested', False):
         return "⚠️ Translation cancelled before start.", "", ""
 
@@ -339,11 +337,7 @@ def translate_content(
     google_api_requests_this_minute = 0
     google_api_minute_start = time.time()
 
-    _lang_detect_map = {
-        "Русский": {"ru", "rus", "russian"},
-        "English": {"en", "eng", "english"},
-        "עברית (Hebrew)": {"he", "heb", "hebrew"},
-    }
+    _lang_detect_map = TARGET_LANGUAGE_MARKERS
 
     def _tokenize_filename(base_name: str):
         return {t.lower() for t in re.split(r'[_\\-\\.\\s\\(\\)\\[\\]]+', base_name) if t}
@@ -366,7 +360,7 @@ def translate_content(
                 clean_text = re.sub(r'(?m)^\d+\s*\n\d{2}:\d{2}:\d{2}[,\.]\d{3}\s*-->\s*\d{2}:\d{2}:\d{2}[,\.]\d{3}\s*\n', '', clean_text)
                 clean_text = re.sub(r'\n\n+', '\n', clean_text).strip()
             all_clean_editor_text += f"\n--- {base_name} (ORIGINAL) ---\n{clean_text}\n"
-            saved_files.append(fpath) # Сохраняем оригинал
+            saved_files.append(fpath)  # keep original
             continue
             
         source_lang_code = file_source_langs.get(fpath, "auto")
@@ -377,7 +371,7 @@ def translate_content(
                 live_log(f"[SKIP] {base_name}: source language is already {source_lang_code}. Skipped, moving on.")
                 continue
             if target_code == source_lang_code and force_all_langs:
-                live_log(f"[TRANSLATE] FORCE ALL LANGUAGES is on, same-language target kept.")
+                live_log(f"[TRANSLATE] TRANSLATE ANYWAY is on, same-language target kept.")
             effective_target_langs.append(target_lang)
 
         if not effective_target_langs:
@@ -402,13 +396,13 @@ def translate_content(
             matched_tokens = _matched_language_tokens(base_name, target_lang)
             if matched_tokens and not force_all_langs:
                 token_str = matched_tokens[0]
-                live_log(f"[SKIP] {target_lang} skipped: filename token '{token_str.upper()}' indicates it is already {target_lang}. Use the FORCE ALL LANGUAGES checkbox to override.")
+                live_log(f"[SKIP] {target_lang} skipped: filename token '{token_str.upper()}' indicates it is already {target_lang}. Use the TRANSLATE ANYWAY checkbox to override.")
                 clean_text = original_text
                 if is_srt:
                     clean_text = re.sub(r'(?m)^\d+\s*\n\d{2}:\d{2}:\d{2}[,\.]\d{3}\s*-->\s*\d{2}:\d{2}:\d{2}[,\.]\d{3}\s*\n', '', clean_text)
                     clean_text = re.sub(r'\n\n+', '\n', clean_text).strip()
                 all_clean_editor_text += f"\n--- {base_name} ({target_lang}) ---\n{clean_text}\n"
-                saved_files.append(fpath) # Сохраняем оригинал
+                saved_files.append(fpath)  # keep original
                 continue
 
             translated_blocks = []
@@ -418,7 +412,7 @@ def translate_content(
             if len(chunks) == 1:
                 live_log(f"[TRANSLATE] Single chunk ({len(chunks[0])} blocks) - no split needed.")
 
-            lang_suffix = {"Русский": "RU", "English": "EN", "עברית (Hebrew)": "HE"}.get(target_lang, "TRANS")
+            lang_suffix = TARGET_LANGUAGE_CODE_MAP.get(target_lang, "TRANS")
             
             for idx, chunk in enumerate(chunks):
                 while getattr(utils, 'pause_requested', False) and not getattr(utils, 'stop_requested', False):
@@ -446,7 +440,7 @@ def translate_content(
                 utils.log_queue.put(f"[PROGRESS_TRANS] | {processed_chunks} | {total_chunks_all} | {e_sec} | {file_idx} | {len(file_chunks_map)} | {lang_suffix} | {idx} | {len(chunks)} | {base_name}\n")
                     
                 chunk_text_str = "\n\n".join(chunk)
-                user_prompt = f"Переведи этот текст на язык: {target_lang}. \n\nТЕКСТ:\n{chunk_text_str}"
+                user_prompt = f"Translate this text into {target_lang}.\n\nTEXT:\n{chunk_text_str}"
                 live_log(f"   Processing chunk {idx+1} of {len(chunks)}...")
                 
                 max_retries = 10 
@@ -471,7 +465,7 @@ def translate_content(
                             return _rj["content"][0].get("text", "")
                         else:
                             _rt = _rj.get("choices", [{}])[0].get("message", {}).get("content", "")
-                            if "Ошибка:" in _rt and "недоступны" in _rt:
+                            if "Error:" in _rt and "unavailable" in _rt:
                                 raise Exception(f"CRITICAL_API_ERROR: Proxy found no working models (404/429).")
                             return _rt
                     elif provider == "Google Studio (Gemma 4)":
@@ -520,7 +514,7 @@ def translate_content(
                             sub_success = True
                             for sub_idx, single_block in enumerate(chunk):
                                 if getattr(utils, 'stop_requested', False): sub_success = False; break
-                                sub_prompt = f"Переведи этот текст на язык: {target_lang}. \n\nТЕКСТ:\n{single_block}"
+                                sub_prompt = f"Translate this text into {target_lang}.\n\nTEXT:\n{single_block}"
                                 try:
                                     sub_result = _send_to_api(sub_prompt)
                                     if sub_result:
@@ -561,7 +555,7 @@ def translate_content(
                         else:
                             live_log(f"   ❌ Final error for chunk {idx+1}: {err_str}")
                             logging.error(f"[TRANSLATE] ❌ All attempts exhausted for chunk {idx+1}: {err_str}")
-                            translated_blocks.append(f"==== ОШИБКА ПЕРЕВОДА БЛОКА ====\n{chunk_text_str}")
+                            translated_blocks.append(f"==== TRANSLATION ERROR BLOCK ====\n{chunk_text_str}")
 
                 if not success and getattr(utils, 'stop_requested', False): break
                 if idx < len(chunks) - 1: 
@@ -570,8 +564,7 @@ def translate_content(
 
             if translated_blocks:
                 final_translated_text = "\n\n".join(translated_blocks)
-                lang_map = {"Русский": "RU", "English": "EN", "עברית (Hebrew)": "HE"}
-                lang_suffix = lang_map.get(target_lang, "TRANS")
+                lang_suffix = TARGET_LANGUAGE_CODE_MAP.get(target_lang, "TRANS")
                 orig_ext = os.path.splitext(fpath)[1] if fpath != "PLAIN_TEXT" else ".txt"
                 ext = orig_ext if orig_ext else ".txt"
                 
@@ -585,11 +578,24 @@ def translate_content(
                     with open(translated_path, "w", encoding="utf-8") as f: f.write(final_translated_text)
                     saved_files.append(translated_path)
                     files_written_count += 1
-                    
+
+                    if plain_text_output and is_srt:
+                        try:
+                            clean_text = utils.clean_srt_text(final_translated_text)
+                            clean_path = os.path.join(
+                                out_dir,
+                                f"{os.path.splitext(os.path.basename(translated_path))[0]}_CLEAN.txt"
+                            )
+                            with open(clean_path, "w", encoding="utf-8") as f:
+                                f.write(clean_text)
+                            saved_files.append(clean_path)
+                            live_log(f"[CLEAN] {os.path.basename(clean_path)}")
+                        except Exception as e:
+                            live_log(f"❌ Clean text save error: {e}")
+
                     clean_text = final_translated_text
                     if is_srt:
-                        clean_text = re.sub(r'(?m)^\d+\s*\n\d{2}:\d{2}:\d{2}[,\.]\d{3}\s*-->\s*\d{2}:\d{2}:\d{2}[,\.]\d{3}\s*\n', '', clean_text)
-                        clean_text = re.sub(r'\n\n+', '\n', clean_text).strip()
+                        clean_text = utils.clean_srt_text(clean_text)
                     all_clean_editor_text += f"\n--- {base_name} ({target_lang}) ---\n{clean_text}\n"
                 except Exception as e: live_log(f"❌ File save error: {e}")
 
@@ -607,7 +613,7 @@ def translate_content(
         live_log(f"[TRANSLATE] Batch finished: {len(file_chunks_map)} file(s), {len(target_langs)} language(s), {files_written_count} file(s) written.")
 
     status_msg = f"{'⚠️ Interrupted. Partial progress saved' if getattr(utils, 'stop_requested', False) else '✅ Completed'}: {len(saved_files)} files."
-    # 🚀 Возвращаем ТРИ переменные (третья - список путей к SRT через |)
+    # Return three values (third is the SRT path list joined by |)
     return status_msg, all_clean_editor_text, "|".join(saved_files)
 
 def check_api(provider: str, current_api_key: str, model_name: str) -> str:

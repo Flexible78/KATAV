@@ -8,8 +8,8 @@ from typing import List, Dict, Any, Tuple
 
 import gradio as gr # Импорт Gradio здесь только для gr.update, пересмотреть, если srt_processor будет без Gradio
 
-from utils import log_to_terminal, sanitize_srt_text, interruptible_sleep, log_queue # Импортируем нужные утилиты
-from config import DEFAULT_OUTPUT_DIR # Импортируем DEFAULT_OUTPUT_DIR
+from utils import log_to_terminal, sanitize_srt_text, interruptible_sleep, log_queue, clean_srt_text
+from config import DEFAULT_OUTPUT_DIR
 
 # ==============================================================================
 # 9. СИСТЕМНЫЕ УТИЛИТЫ И АВТО-ОЧИСТИТЕЛЬ (SANITIZER) (часть функций)
@@ -117,8 +117,8 @@ def export_to_json_dict(srt_local_path: str, custom_srt_files: List[Any], plain_
     global current_percent, time_elapsed, time_remaining, audio_speed, current_action, stop_requested
 
     stop_requested = False
-    current_action = "Создание словарей (JSON + CSV)"
-    current_percent = 0; time_elapsed = "00:00"; time_remaining = "00:00"; audio_speed = "Парсинг"
+    current_action = "Creating dictionaries (JSON + CSV)"
+    current_percent = 0; time_elapsed = "00:00"; time_remaining = "00:00"; audio_speed = "Parsing"
     start_time = time.time()
 
     saved_jsons = []
@@ -203,10 +203,8 @@ def export_to_json_dict(srt_local_path: str, custom_srt_files: List[Any], plain_
                 try:
                     with open(fpath, 'r', encoding='utf-8') as f: content = f.read()
                     
-                    # 1) АВТОМАТИЧЕСКАЯ ГЕНЕРАЦИЯ ЧИСТОГО TXT ПРИ ЭКСТРАКЦИИ
-                    clean_text = re.sub(r'(?m)^\d+\s*\n\d{2}:\d{2}:\d{2}[,\.]\d{3}\s*-->\s*\d{2}:\d{2}:\d{2}[,\.]\d{3}\s*\n', '', content)
-                    clean_text = re.sub(r'<[^>]+>', '', clean_text)
-                    clean_text = re.sub(r'\n\n+', '\n', clean_text).strip()
+                    # 1) Generate a clean plain-text sidecar during extraction.
+                    clean_text = clean_srt_text(content)
                     
                     clean_txt_path = os.path.join(scan_dir, f"{os.path.splitext(fname)[0]}_CLEAN.txt")
                     with open(clean_txt_path, 'w', encoding='utf-8') as f:
@@ -221,7 +219,7 @@ def export_to_json_dict(srt_local_path: str, custom_srt_files: List[Any], plain_
                     robust_parse_srt(content, lang_key, dict_data, is_srt=is_srt)
                     langs_found.add(lang_key)
                 except Exception as e: 
-                    log_to_terminal(f"Ошибка парсинга {fname}: {e}")
+                    log_to_terminal(f"Parsing error {fname}: {e}")
             
         if dict_data:
             def safe_sort_key(x):
@@ -243,9 +241,9 @@ def export_to_json_dict(srt_local_path: str, custom_srt_files: List[Any], plain_
                 with open(json_path, 'w', encoding='utf-8') as f:
                     json.dump(clean_export_list, f, ensure_ascii=False, indent=4)
                 saved_jsons.append(json_path)
-            except Exception as e: log_to_terminal(f"Ошибка сохранения JSON: {e}")
+            except Exception as e: log_to_terminal(f"JSON save error: {e}")
                 
-            # --- СОХРАНЕНИЕ CSV (Для F5-TTS и Excel) ---
+            # --- CSV SAVE (for F5-TTS and Excel) ---
             csv_path = os.path.join(target_dir, f"{base}_MULTILANG_DICT{p_tag}.csv")
             try:
                 lang_headers = set()
@@ -271,7 +269,7 @@ def export_to_json_dict(srt_local_path: str, custom_srt_files: List[Any], plain_
                 
                 report_lines.append(f"✅ {base} -> Языки: {', '.join(langs_found)}")
             except Exception as e: 
-                log_to_terminal(f"Ошибка сохранения CSV: {e}")
+                log_to_terminal(f"CSV save error: {e}")
 
         processed += 1
         current_percent = int((processed / total_bases) * 100) if total_bases > 0 else 100

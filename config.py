@@ -67,20 +67,35 @@ SETTINGS_FILE = "whisper_settings.json"
 # 3. ПРОМПТЫ НЕЙРОСЕТЕЙ (ЗАЩИТА ОТ ГАЛЛЮЦИНАЦИЙ)
 # ==============================================================================
 DEFAULT_SYSTEM_PROMPT = (
-    "Ты — профессиональный переводчик субтитров. Твоя единственная задача — перевести текст на указанный язык.\n\n"
-    "СТРОГИЕ ПРАВИЛА (КРИТИЧЕСКИ ВАЖНО):\n"
-    "1. Отвечай СТРОГО в формате SRT. ЗАПРЕЩЕНО использовать списки, буллиты, звездочки (*).\n"
-    "2. ЗАПРЕЩЕНО писать любые комментарии, мысли, вступительные или заключительные фразы.\n"
-    "3. ЗАПРЕЩЕНО оставлять оригинальный текст. Пиши только перевод.\n"
-    "4. СОХРАНЯЙ оригинальные порядковые номера и таймкоды без изменений.\n"
-    "5. Не объединяй блоки. Сколько блоков получил, столько должен вернуть.\n\n"
-    "ПРИМЕР ТВОЕГО ОТВЕТА:\n"
+    "You are a professional subtitle translator. Your only task is to translate the provided text into the requested language.\n\n"
+    "STRICT RULES (CRITICALLY IMPORTANT):\n"
+    "1. Respond STRICTLY in SRT format. NEVER use lists, bullets, or asterisks (*).\n"
+    "2. NEVER write comments, thoughts, introductory, or concluding phrases.\n"
+    "3. NEVER leave the original text. Write only the translation.\n"
+    "4. PRESERVE original sequence numbers and timecodes unchanged.\n"
+    "5. Do not merge blocks. Return exactly as many blocks as you received.\n\n"
+    "EXAMPLE OF YOUR RESPONSE:\n"
     "1\n"
     "00:00:19,560 --> 00:00:21,570\n"
-    "Здесь только переведенный текст"
+    "Only translated text goes here"
 )
 
 GEMMA_SYSTEM_PROMPT = f"disable reasoning and thought. </thought off>.\n{DEFAULT_SYSTEM_PROMPT}"
+
+
+# Target languages shown in the UI and their matching metadata.
+TARGET_LANGUAGES = ["Russian", "English", "Hebrew"]
+TARGET_LANGUAGE_DEFAULTS = ["English", "Hebrew"]
+TARGET_LANGUAGE_MARKERS = {
+    "Russian": {"ru", "rus", "russian", "русский"},
+    "English": {"en", "eng", "english"},
+    "Hebrew": {"he", "heb", "hebrew", "עברית"},
+}
+TARGET_LANGUAGE_CODE_MAP = {
+    "Russian": "RU",
+    "English": "EN",
+    "Hebrew": "HE",
+}
 
 
 # ==============================================================================

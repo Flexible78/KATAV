@@ -76,9 +76,52 @@ def interruptible_sleep(seconds: float) -> bool:
 
 def sanitize_srt_text(text: str) -> str:
     text = text.replace('\ufeff', '') 
-    text = re.sub(r'==== ОШИБКА ПЕРЕВОДА БЛОКА ====\n?', '', text)
+    text = re.sub(r'==== TRANSLATION ERROR BLOCK ====\n?', '', text)
     text = re.sub(r'<(thought|think)>.*?</\1>\n?', '', text, flags=re.DOTALL)
     return text.strip()
+
+
+def clean_srt_text(text: str) -> str:
+    """Strip SRT/VTT block numbers, timestamps, and tags, returning plain paragraphs.
+
+    Handles comma/dot milliseconds, CRLF/LF line endings, UTF-8 BOM, RTL direction
+    markers, VTT cue tags and standard HTML-style tags. Words are not glued together.
+    """
+    # Remove BOM and normalize line endings.
+    text = text.lstrip('\ufeff').replace('\r\n', '\n').replace('\r', '\n')
+    # Remove directional formatting characters.
+    text = re.sub(r'[\u200E\u200F]', '', text)
+
+    blocks = re.split(r'\n\s*\n', text.strip())
+    cleaned_blocks: list[str] = []
+
+    for block in blocks:
+        lines = block.split('\n')
+        text_lines: list[str] = []
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            # Block index number (pure digits).
+            if re.fullmatch(r'\d+', stripped):
+                continue
+            # SRT/VTT timing line, e.g. 00:00:03.700 --> 00:00:17.460
+            if re.fullmatch(
+                r'\d{2}:\d{2}:\d{2}[,\.]\d{3}\s*-->\s*\d{2}:\d{2}:\d{2}[,\.]\d{3}',
+                stripped,
+            ):
+                continue
+            # VTT voice/style tags and generic HTML/SSA tags.
+            line = re.sub(r'</?[vc]\.[^>]*>', '', line)
+            line = re.sub(r'<[^>]+>', '', line)
+            # Positioning directives (left-over from malformed VTT).
+            line = re.sub(r'^\s*(?:\{\}?[a-zA-Z_]+\s*:\s*[^}]*|position:\s*\d+%|align:\s*\w+|line:\s*\d+%?)', '', line)
+            if line.strip():
+                text_lines.append(line.strip())
+        if text_lines:
+            cleaned_blocks.append(' '.join(text_lines))
+
+    return '\n\n'.join(cleaned_blocks)
 
 def enqueue_output(out, queue_obj: queue.Queue):
     buf = ""
