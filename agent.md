@@ -700,7 +700,7 @@ Batch of fixes for translation duplication, queue lifecycle, honest ETA, single 
 - `git ls-files | findstr /i ".env .bundle .katav_pids"` — no matches.
 - Live key/absolute-path scan of tracked files — no matches.
 - `git diff --check` — clean (no whitespace errors).
-- `README.md`, `docs/USAGE.md`, `docs/SETUP.md` contain no `C:\Users\Alexander` paths.
+- `README.md`, `docs/USAGE.md`, `docs/SETUP.md` contain no user-specific local paths.
 - Example files `whisper_api_keys.example.json` and `whisper_settings.example.json` contain only empty/placeholder values.
 
 ### What was not done
