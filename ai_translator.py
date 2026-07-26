@@ -418,7 +418,7 @@ def translate_content(
             if len(chunks) == 1:
                 live_log(f"[TRANSLATE] Single chunk ({len(chunks[0])} blocks) - no split needed.")
 
-            lang_code = {"Русский": "RU", "English": "EN", "עברית (Hebrew)": "HE"}.get(target_lang, "TRANS")
+            lang_suffix = {"Русский": "RU", "English": "EN", "עברית (Hebrew)": "HE"}.get(target_lang, "TRANS")
             
             for idx, chunk in enumerate(chunks):
                 while getattr(utils, 'pause_requested', False) and not getattr(utils, 'stop_requested', False):
@@ -443,7 +443,7 @@ def translate_content(
 
                 processed_chunks += 1 
                 e_sec = int(time.time() - start_time)
-                utils.log_queue.put(f"[PROGRESS_TRANS] | {processed_chunks} | {total_chunks_all} | {e_sec} | {file_idx} | {len(file_chunks_map)} | {lang_code} | {idx} | {len(chunks)} | {base_name}\n")
+                utils.log_queue.put(f"[PROGRESS_TRANS] | {processed_chunks} | {total_chunks_all} | {e_sec} | {file_idx} | {len(file_chunks_map)} | {lang_suffix} | {idx} | {len(chunks)} | {base_name}\n")
                     
                 chunk_text_str = "\n\n".join(chunk)
                 user_prompt = f"Переведи этот текст на язык: {target_lang}. \n\nТЕКСТ:\n{chunk_text_str}"
@@ -601,8 +601,8 @@ def translate_content(
             if "_TRANSLATED_" in sf:
                 match = re.search(r'_TRANSLATED_([A-Z]{2,3})', os.path.basename(sf))
                 if match:
-                    lang_code = match.group(1)
-                    live_log(f"[RESULT] {lang_code} -> {sf}")
+                    result_lang = match.group(1)
+                    live_log(f"[RESULT] {result_lang} -> {sf}")
 
         live_log(f"[TRANSLATE] Batch finished: {len(file_chunks_map)} file(s), {len(target_langs)} language(s), {files_written_count} file(s) written.")
 
