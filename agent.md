@@ -656,3 +656,59 @@ When in doubt:
 - K10 brand: renamed to KATAV across UI, launcher and dialogs.
 - Commits: b637872, 7ac4b58, 531eb37, 99df2ed, fc6f24c, a36e53d, fdacf8c, 51de1b0, 5bcea68, brand commit.
 - Nothing was pushed.
+
+---
+
+## Snapshot 2026-07-26 — AA1-AA7 Bug-fix release (KATAV)
+
+### Summary
+Batch of fixes for translation duplication, queue lifecycle, honest ETA, single weighted progress bar, source-language skip, safe tests, and release hygiene.
+
+### What changed
+- **AA1** — `ai_translator.py`: deduplicated the translation source list, dropped files with `_TRANSLATED_` in the name, added a module-level singleton guard to prevent concurrent `translate_content` runs, and added per-run `(path, language)` duplicate skipping with a single batch-finish log line.
+- **AA2** — `queue_manager.py`, `whisper_core.py`, `gradio_app.py`: moved queue item lifecycle management from the log parser into the batch loop; `mark_started`, `mark_item_running`, `mark_item_done`, `mark_item_failed`, and per-line `update_item_progress` are now called from `whisper_core.py`. Fixed `[PROGRESS_FILE]` format to four fields so the parser accepts it. Removed duplicate queue debug rendering from the UI.
+- **AA3** — `utils.py`, `whisper_core.py`, `gradio_app.py`: added `parse_whisper_progress` in `utils.py`, computed honest remaining time from Whisper’s own `elapsed<<remaining` field, and fed it into batch ETA. Replaced hardcoded "API" speed with real `x` during transcription and chunk/min during translation.
+- **AA4** — `gradio_app.py`: replaced separate transcription/translation bars with one weighted 70/30 bar, added phase labels (`TRANSCRIBE - file X/Y - XX%` / `TRANSLATE - file X/Y - LANG - chunk A/B`), removed `single_item_mode` bar hiding and the dead second progress widget.
+- **AA5** — `ai_translator.py`, `whisper_core.py`, `queue_manager.py`, `gradio_app.py`: added `lang_code` helper, stored faster-whisper detected language in queue item metadata, and skipped target languages identical to the source language unless `FORCE ALL LANGUAGES` is enabled.
+- **AA6** — `test_queue.py`: fixed private attribute names (`_items`, `_next_idx`, `_cancelled`) and mocked `subprocess.run` so the test never calls a real `shutdown /s`.
+- **AA7** — `.gitignore`: verified and ensured all required ignore rules are present; confirmed no tracked secrets, no live keys, and no user-specific absolute paths in README/docs.
+
+### Files changed
+- `ai_translator.py` — deduplication, singleton guard, source-language detection, same-language skip.
+- `whisper_core.py` — queue lifecycle hooks, detected-language metadata, progress line parsing for ETA.
+- `queue_manager.py` — lifecycle methods, progress updates, detected-language helpers.
+- `gradio_app.py` — progress panel rewrite, queue status rendering, language dropdown passed to translator.
+- `utils.py` — `WHISPER_PROGRESS_RE`, `parse_whisper_progress`.
+- `test_queue.py` — attribute fixes, shutdown mocking.
+- `.gitignore` — verified/added release-hygiene ignore rules.
+
+### Commits
+- `ec68fda` fix(translate): deduplicate the translation source list and never re-translate outputs
+- `c1ea3ed` fix(queue): start the item lifecycle from the batch loop, not from the log parser
+- `64cc9a9` feat(eta): honest remaining time from Whisper progress and measured speed
+- `ba19b36` feat(ui): one weighted progress bar for transcription and translation
+- `f44bcae` fix(translate): skip target languages identical to the source language
+- `8e797a5` test(queue): fix attribute names and never trigger a real shutdown
+- (AA7 commit follows below)
+
+### Verification results
+- AST check: all `.py` files parse without syntax errors — `AST OK`.
+- `test_queue.py`: 29/29 passed.
+- `test_url_pipeline.py`: 14/14 passed.
+- No leftover `check_aa*.py` scripts.
+- `git ls-files | findstr /i "key secret token" | findstr /v /i ".example."` — no matches.
+- `git ls-files | findstr /i ".env .bundle .katav_pids"` — no matches.
+- Live key/absolute-path scan of tracked files — no matches.
+- `git diff --check` — clean (no whitespace errors).
+- `README.md`, `docs/USAGE.md`, `docs/SETUP.md` contain no `C:\Users\Alexander` or `C:\_progs` paths.
+- Example files `whisper_api_keys.example.json` and `whisper_settings.example.json` contain only empty/placeholder values.
+
+### What was not done
+- GUI runtime verification (requires manual owner testing with real media).
+- Full transcription + translation end-to-end smoke test (requires Faster-Whisper-XXL and API keys).
+- No push to remote; publication is left to the owner.
+
+### Risks
+- The 70/30 progress split assumes every full-cycle run passes through both phases. A standalone translation run is detected and falls back to 0-100% translation-only progress.
+- Same-language skip relies on the `LANGUAGE` setting or detected-language metadata; if both are `auto` and filename tokens are ambiguous, the skip may not trigger.
+- Queue lifecycle hooks are now in `whisper_core.py`; any future direct callers of the transcription function that do not use the queue path will bypass progress updates.

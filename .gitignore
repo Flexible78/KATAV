@@ -29,6 +29,10 @@ hf_cache/
 
 # Repomix / generated reports
 repomix*.xml
+repomix-output.*
+
+# URL cache (any location)
+_url_cache/
 
 # Media files
 *.mp3
