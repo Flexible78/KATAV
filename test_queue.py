@@ -5,6 +5,7 @@ Run: python test_queue.py
 import sys
 import os
 import time
+from unittest.mock import patch, MagicMock
 
 # Ensure we can import from the project root
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -164,13 +165,15 @@ def test_snapshot_semantics():
 def test_shutdown_eligibility():
     """E2: shutdown allowed only after completed batch with >=1 success."""
     print("\n=== E2: Shutdown eligibility ===")
-    qm = QueueManager()
-    qm.reset()
 
     # No items = no shutdown
+    qm = QueueManager()
+    qm.reset()
     qm.enable_shutdown()
-    msg = qm.check_and_schedule_shutdown()
+    with patch("queue_manager.subprocess.run") as mock_run:
+        msg = qm.check_and_schedule_shutdown()
     check("No items -> shutdown skipped", "skipped" in msg.lower() or "No items" in msg)
+    check("subprocess.run not called when no items", not mock_run.called)
 
     # Have items but all failed
     qm.reset()
@@ -179,10 +182,12 @@ def test_shutdown_eligibility():
     ]
     qm._next_idx = 2
     qm.enable_shutdown()
-    msg = qm.check_and_schedule_shutdown()
+    with patch("queue_manager.subprocess.run") as mock_run:
+        msg = qm.check_and_schedule_shutdown()
     check("All failed -> shutdown skipped", "skipped" in msg.lower() or "No items" in msg)
+    check("subprocess.run not called when all failed", not mock_run.called)
 
-    # Have at least one success
+    # Have at least one success -> verify the formed shutdown command
     qm.reset()
     qm._items = [
         QueueItem(idx=1, source="file", name="done.mp4", path_or_url="/tmp/d.mp4", status="done"),
@@ -190,8 +195,13 @@ def test_shutdown_eligibility():
     qm._next_idx = 2
     qm.enable_shutdown()
     qm._cancelled = False
-    # Don't actually call shutdown /s; just verify logic path
-    check("Shutdown enabled flag set", qm.is_shutdown_enabled())
+    with patch("queue_manager.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        msg = qm.check_and_schedule_shutdown()
+        check("Shutdown enabled flag set", qm.is_shutdown_enabled())
+        check("subprocess.run called for successful batch", mock_run.called)
+        args, _ = mock_run.call_args
+        check("Shutdown command is 'shutdown /s /t 60'", list(args[0]) == ["shutdown", "/s", "/t", "60"])
 
     # Cancel shutdown
     qm.disable_shutdown()
