@@ -7,6 +7,33 @@ from typing import List
 # ==============================================================================
 # 8. ВЗАИМОДЕЙСТВИЕ С ОС И ДИАЛОГАМИ (ПРЯМЫЕ ПУТИ И БУФЕР)
 # ==============================================================================
+def read_clipboard_text() -> str:
+    """Return raw clipboard text, no filesystem filtering."""
+    try:
+        CREATE_NO_WINDOW = 0x08000000
+        p = subprocess.Popen(
+            ["powershell", "-NoProfile", "-command", "Get-Clipboard -Raw"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=CREATE_NO_WINDOW
+        )
+        out, _ = p.communicate(timeout=3)
+        if out is not None:
+            return out
+    except Exception:
+        pass
+
+    try:
+        import tkinter as tk
+        root = tk.Tk()
+        root.withdraw()
+        clip_text = root.clipboard_get()
+        root.destroy()
+        return clip_text or ""
+    except Exception:
+        pass
+
+    return ""
+
+
 def read_clipboard_paths() -> str:
     paths = []
     

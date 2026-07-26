@@ -21,7 +21,7 @@ from utils import (
 )
 # Оставляем только старые безопасные функции из dialogs
 from dialogs import (
-    read_clipboard_paths, open_folder_dialog, open_files_batch_dialog,
+    read_clipboard_paths, read_clipboard_text, open_folder_dialog, open_files_batch_dialog,
     open_dir_batch_dialog, open_srt_batch_dialog, open_dir_srt_dialog,
     save_edited_text_dialog
 )
@@ -507,6 +507,7 @@ def build_app():
                         scale=5
                     )
                     add_url_btn = gr.Button("➕ ADD URL", variant="secondary", elem_classes=["fixed-height-btn"], scale=1, min_width=40)
+                    paste_url_btn = gr.Button("📋 PASTE URL", variant="secondary", elem_classes=["fixed-height-btn"], scale=1, min_width=40)
                 
                 with gr.Row(elem_classes=["uniform-row"]):
                     manual_path = gr.Textbox(
@@ -811,14 +812,14 @@ def build_app():
             outputs=[api_model]
         )
         
-        def append_url_to_input(current_urls: str, new_url: str) -> str:
-            """Append a URL to the urls_input, deduplicating."""
+        def append_url_to_input(current_urls: str, new_url: str):
+            """Append a URL to the urls_input, deduplicating. Returns (updated_urls, new_url_field_value)."""
             new_url = (new_url or "").strip()
             if not new_url:
-                return current_urls or ""
+                return current_urls or "", ""
             if not re.match(r'^https?://', new_url):
                 gr.Warning(f"Invalid URL: {new_url[:80]}")
-                return current_urls or ""
+                return current_urls or "", new_url
             # Normalize: remove trailing slash
             new_norm = new_url.rstrip("/")
             existing = (current_urls or "").strip()
@@ -827,19 +828,40 @@ def build_app():
             for eu in existing_urls:
                 if eu == new_norm:
                     gr.Info(f"Already in list: {new_url[:60]}")
-                    return current_urls or ""
+                    return current_urls or "", ""
             # Check batch_queue
             all_items = batch_queue.get_items()
             for it in all_items:
                 if it.source == "url" and it.path_or_url.rstrip("/") == new_norm:
                     gr.Info(f"Already in queue: {new_url[:60]}")
-                    return current_urls or ""
+                    return current_urls or "", ""
+
+            # If a batch is already running, also enqueue live so it appears in the queue panel.
+            import utils as _utils
+            if getattr(_utils, 'process_active', False):
+                batch_queue.add_url(new_url)
+                total_pending = batch_queue.get_total_items()
+                _utils.log_queue.put(f"[QUEUE] URL added ({total_pending} total pending): {new_url[:120]}\n")
+            else:
+                _utils.log_queue.put(f"[QUEUE] URL added: {new_url[:120]}\n")
+
             # Append
             if existing:
-                return existing + "\n" + new_url
-            return new_url
+                return existing + "\n" + new_url, ""
+            return new_url, ""
 
-        add_url_btn.click(fn=append_url_to_input, inputs=[urls_input, new_url_input], outputs=[urls_input])
+        def paste_url_from_clipboard(current_new_url: str) -> str:
+            txt = read_clipboard_text()
+            lines = [l.strip() for l in txt.splitlines() if l.strip()]
+            urls = [l for l in lines if re.match(r'^https?://', l)]
+            if not urls:
+                gr.Warning("Clipboard contains no http(s) URL.")
+                return current_new_url
+            return "\n".join(urls)
+
+        add_url_btn.click(fn=append_url_to_input, inputs=[urls_input, new_url_input], outputs=[urls_input, new_url_input])
+        new_url_input.submit(fn=append_url_to_input, inputs=[urls_input, new_url_input], outputs=[urls_input, new_url_input])
+        paste_url_btn.click(fn=paste_url_from_clipboard, inputs=[new_url_input], outputs=[new_url_input])
 
         paste_btn.click(fn=append_clipboard_to_queue, inputs=[manual_path], outputs=manual_path)
         srt_paste_btn.click(fn=read_clipboard_paths, outputs=srt_local_path)
