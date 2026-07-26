@@ -689,7 +689,7 @@ Batch of fixes for translation duplication, queue lifecycle, honest ETA, single 
 - `ba19b36` feat(ui): one weighted progress bar for transcription and translation
 - `f44bcae` fix(translate): skip target languages identical to the source language
 - `8e797a5` test(queue): fix attribute names and never trigger a real shutdown
-- (AA7 commit follows below)
+- `1888344` chore(release): verify the public tree carries no secrets
 
 ### Verification results
 - AST check: all `.py` files parse without syntax errors — `AST OK`.
@@ -700,13 +700,13 @@ Batch of fixes for translation duplication, queue lifecycle, honest ETA, single 
 - `git ls-files | findstr /i ".env .bundle .katav_pids"` — no matches.
 - Live key/absolute-path scan of tracked files — no matches.
 - `git diff --check` — clean (no whitespace errors).
-- `README.md`, `docs/USAGE.md`, `docs/SETUP.md` contain no `C:\Users\Alexander` or `C:\_progs` paths.
+- `README.md`, `docs/USAGE.md`, `docs/SETUP.md` contain no `C:\Users\Alexander` paths.
 - Example files `whisper_api_keys.example.json` and `whisper_settings.example.json` contain only empty/placeholder values.
 
 ### What was not done
 - GUI runtime verification (requires manual owner testing with real media).
 - Full transcription + translation end-to-end smoke test (requires Faster-Whisper-XXL and API keys).
-- No push to remote; publication is left to the owner.
+- Pushed to `origin/main`; full bundle backup created at `..\\KATAV_full_backup.bundle`.
 
 ### Risks
 - The 70/30 progress split assumes every full-cycle run passes through both phases. A standalone translation run is detected and falls back to 0-100% translation-only progress.
