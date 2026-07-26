@@ -877,3 +877,158 @@ BD batch: fix handler wiring after new controls broke `prepare_start`, compact t
 - `get_drive_status()` fetches the Google profile at UI build time if a token exists; network timeouts are caught, but a slow response could delay initial page load.
 - BATCH RESULTS visibility is toggled by `process_logs` based on `batch_completed + batch_failed >= batch_total`; rapid queue resets may briefly flash the group.
 - Spotify rejection happens both in `append_url_to_input` (UI) and in `run_transcription` (backend), so a URL pasted directly into the multi-line field without using the button is still rejected during processing.
+
+---
+
+## Snapshot 2026-07-26 — BD10-BD13 Runtime-error batch (Progon 1, KATAV)
+
+### Summary
+Progon 1: fix four runtime crashes and UX regressions — language-code crash in Gradio, silent ffmpeg failures, port drift killing the EXIT button, and broken theme toggle / scattered CLEAR button.
+
+### BD10 — fix(lang): use stable language codes and migrate saved display labels
+
+**Problem:** `whisper_settings.json` stored old display labels (`Русский`, `עברית (Hebrew)`) while `TARGET_LANGUAGES` had been refactored to English labels (`Russian`, `English`, `Hebrew`). Gradio's `CheckboxGroup.preprocess` rejects any value not in `choices`, causing a hard crash.
+
+**Fix:**
+- `config.py`: `TARGET_LANGUAGES` → list of `(label, code)` tuples: `[("Russian","RU"), ("English","EN"), ("Hebrew","HE")]`. Defaults → `["EN", "HE"]`. All dicts (`TARGET_LANGUAGE_MARKERS`, `TARGET_LANGUAGE_CODE_MAP`) keyed by stable codes. `_LANG_MIGRATION_TABLE` maps every historical variant (`Русский`, `עברית (Hebrew)`, `иврит`, etc.) → stable code.
+- Added `sanitize_choice_value(value, choices)` helper for pre-substitution sanitisation of any saved value before `Dropdown`/`Radio`/`CheckboxGroup`.
+- `ui_manager.py`: `load_settings()` auto-migrates `trans_langs` on load, writing the cleaned list back to disk immediately. `_migrate_lang_list()` converts old labels → codes, drops unrecognised values with a `logging.warning`, and deduplicates.
+- `ai_translator.py`: `_LANG_DETECT_MAP` now keyed by codes (RU/EN/HE). `lang_suffix` resolves via `TARGET_LANGUAGE_CODE_MAP` with fallback to `lang_code().upper()` — the string `"TRANS"` can never appear as a file suffix for the three supported languages.
+- New test: `test_lang_codes.py` — 8 non-GUI tests covering label→code pairs, marker keys, old-label resolution, self-mapping, suffix-never-TRANS, migration of old settings (simulated), and settings-file round-trip.
+
+### BD11 — fix(pipeline): surface ffmpeg stderr and never report failed items as done
+
+**Problem A:** Audio extraction via `ffmpeg-python` reported `ffmpeg error (see stderr output for detail)` but never showed stderr. ffprobe failures in `queue_manager.py` were silent.
+**Problem B:** After a failed extraction the batch summary read `✅ BATCH DONE! Files processed: 2` and handed phantom files to the translation stage.
+
+**Fix:**
+- `whisper_core.py`: ffmpeg exception handler now decodes `.stderr` bytes with `errors="replace"` and appends the last 5 stderr lines to the user-visible message.
+- `queue_manager.py`: `_get_file_duration` logs return code, command, and stderr tail on ffprobe failure; catches `FileNotFoundError` ("ffprobe not found") separately.
+- Whisper process now captures stderr in a separate thread (`_read_stderr`). `whisper_rc` is checked after `process.wait()`.
+- `processed_srt_paths` handoff to translation now filters by `os.path.isfile` and non-zero size, so phantom files never reach the translator.
+- `BATCH DONE` summary replaced with `BATCH DONE. ok: N | failed: M | skipped: K`. If `M > 0`, no green checkmark.
+- `batch_queue.get_skipped_count()` added (BD8).
+
+### BD12 — fix(startup): stop silent port drift, move CSS to `launch()`, and clean up warnings
+
+**Problem A:** When port 7861 was busy, Gradio silently picked a random free port. The EXIT kill logic searched for processes on 7861 and 8080, missing the actual port.
+**Problem B:** `UserWarning: The parameters have been moved from the Blocks constructor to the launch() method in Gradio 6.0: css`.
+**Problem C:** `FutureWarning` from `google.generativeai`.
+**Problem D:** Gradio telemetry phoning home on every startup.
+
+**Fix:**
+- `main.py`: added `_check_port(port)` — PowerShell `Get-NetTCPConnection` to find the owner PID. If a `python.exe` whose command line contains `main.py` from the project root holds the port, it is killed with `taskkill /PID /T /F`. Foreign processes produce a clear error and `sys.exit(1)`. No random port fallback as a last resort — if the fallback still fires, `.katav_port` is written (gitignored) so the EXIT logic can read it.
+- `css=custom_css` removed from `gr.Blocks(...)`; kept only in `app.launch(css=custom_css, ...)`. Added `analytics_enabled=False`.
+- `os.environ["GRADIO_ANALYTICS_ENABLED"] = "False"` set before imports in `main.py`.
+- `FutureWarning` filter already present from BB3.
+
+### BD13 — feat(ui): CLEAR in the top row and remove the broken theme toggle
+
+**Problem:** CLEAR was buried in the lower row. Theme toggle button registered no click handler that could be verified in Gradio 6.
+
+**Fix:**
+- CLEAR button moved into the same row as `+ URL`, `+ PLAYLIST`, `PASTE` with the shared `.service-btn` CSS class (orange/purple accent). `.service-btn` lives in `config.py` custom CSS — one class for all service buttons.
+- Theme toggle entirely removed: the JS hook (`_THEME_JS`, `_RESTORE_THEME_JS`), `theme_toggle_btn`, and the `app.load(..., js=...)` callback were deleted. The CSS variables for light theme remain in `custom_css` for potential future reimplementation. Rationale in commit: "Gradio 6 JS click handler not verifiable without browser — non-working button is worse than no button."
+- Root container `padding-top: 3px` added.
+
+### Files changed
+- `config.py` — language constants, `sanitize_choice_value`, `.service-btn` CSS, Russian→English section header.
+- `ui_manager.py` — migration functions, `_migrate_lang_list`.
+- `ai_translator.py` — code-keyed markers, `lang_suffix` fallback.
+- `whisper_core.py` — ffmpeg stderr capture, Whisper stderr thread, BATCH DONE summary, file-existence filtering.
+- `queue_manager.py` — ffprobe error logging, `mark_item_skipped`, `get_skipped_count`, `retry_failed`.
+- `gradio_app.py` — CSS migration to `launch()`, CLEAR button move, theme toggle removal, `.service-btn` class.
+- `main.py` — `_check_port`, `analytics_enabled=False`, log rename `whisper_app.log` → `app.log`.
+- `test_lang_codes.py` — new, 8 tests.
+
+### Verification
+- AST check: all `.py` files parse without syntax errors.
+- `test_lang_codes.py`: 8/8 passed.
+
+### Risks
+- Migrated `whisper_settings.json` is overwritten in place; the old file is not backed up. A corrupted file will be replaced with an empty dict on the next save.
+- Theme toggle removal drops the `katav-light` functionality; CSS variables remain so re-adding a working toggle later only requires JS.
+- `.katav_port` is written only in the fallback path; the primary path (port 7861 free) does not write it.
+
+---
+
+## Snapshot 2026-07-26 — BD7-BD9 Feature + hygiene batch (Progon 4, KATAV)
+
+### Summary
+Progon 4: new study-deck module for language learning, queue quality-of-life features (skip done, retry failed, open folder), and project hygiene.
+
+### BD7 — feat(learning): build a study deck of words and phrases from the transcript
+
+**New module:** `study_deck.py` — self-contained, standard-library-only. Called after `*_CLEAN.txt` is produced; errors are caught and logged, never killing the transcription pipeline.
+
+**What it does:**
+- Tokenises clean source text and builds a frequency-ranked list of words and 2–4-word n-grams.
+- Filters: stopwords per language (ru/en/he hardcoded sets), single-character tokens, pure digits.
+- Simple lemmatisation: suffix stripping for Russian, English, and Hebrew with common prefix/suffix tables.
+- Pairs each term with one example sentence from the transcript and its translation (matched by subtitle block index). First timestamp extracted from SRT before timestamp removal.
+- Output files (next to the transcript, named from `base_name`):
+  - `*_DECK.csv` — UTF-8 BOM, semicolon-delimited, columns: `term | lemma | count | first_timestamp | sentence | translation`. Excel-safe.
+  - `*_DECK_anki.txt` — tab-separated front/back for direct import into Anki/Quizlet.
+  - `*_DECK.md` — human-readable review sheet, grouped by frequency bands (High/Medium/Low).
+- Accumulation: `known_terms.txt` in the output directory tracks terms already seen, excluding them from future decks.
+- Batch course deck: `COURSE_DECK.csv` merges all per-file decks.
+
+**UI (LEARNING accordion, collapsed by default):**
+- `STUDY DECK` checkbox (default: off) — gates the entire feature.
+- `MIN COUNT` number (default: 2) — minimum occurrences to include a term.
+- `MAX TERMS` number (default: 300) — hard size cap protecting API quota.
+
+**Integration:** `whisper_core.py` calls `build_study_deck()` inside a `try/except` after `*_CLEAN.txt` is written, only when `use_study_deck` is enabled. `build_course_deck()` runs after the batch loop.
+
+### BD8 — feat(queue): skip finished files, retry failed ones, reveal the output folder
+
+**SKIP DONE:** New checkbox (default: on). Before Whisper runs, checks if any expected output file already exists in the output directory. If yes, logs `[SKIP] output exists: <name>` and marks the item `skipped`.
+
+**RETRY FAILED:** New button. Calls `batch_queue.retry_failed()` — resets all items with status `failed` to `queued`, clearing their error strings. A `gr.Info` reports how many were returned.
+
+**OPEN OUTPUT FOLDER:** New button. Opens `explorer <output_dir>` on Windows. Displays an auto-updating size label (B/KB/MB/GB) refreshed via timer + `gr.State` sync (to avoid `.value` access on timer ticks).
+
+**Queue additions:** `QueueItem.status` extended with `"skipped"`. `mark_item_skipped()`, `get_skipped_count()`, `retry_failed()` added to `QueueManager`. `BATCH DONE` summary (BD11) now includes the skipped count.
+
+### BD9 — chore(hygiene): delete stale translator copy, rotate the log, pin dependencies
+
+- **libs/ai_translator.py**: confirmed absent (deleted in BC2); verified zero imports from `libs`.
+- **Log rotation**: `utils.py` now checks `app.log` size at import time; if > 5 MB, renames to `app.log.1` (one backup kept). `main.py` also uses `app.log` (renamed from `whisper_app.log`).
+- **Dependencies**: `requirements.txt` kept with lower-bound pins; freeze-from-venv deferred (no working venv available at commit time).
+- **Russian prompts**: section header in `config.py` translated to English. `DEFAULT_SYSTEM_PROMPT` and `GEMMA_SYSTEM_PROMPT` were already in English.
+- **`.katav_port`**: added to `.gitignore`.
+
+### Files changed / new
+- `study_deck.py` — new module (BD7).
+- `whisper_core.py` — skip-done logic, study-deck integration, course-deck generation, BATCH DONE with skipped count.
+- `gradio_app.py` — LEARNING accordion, SKIP DONE checkbox, RETRY FAILED button, OPEN OUTPUT FOLDER button + size label, BD8 button handlers, timer state syncer.
+- `queue_manager.py` — `mark_item_skipped`, `get_skipped_count`, `retry_failed`.
+- `utils.py` — log rotation at import time.
+- `main.py` — log filename renamed.
+- `.gitignore` — `.katav_port` entry.
+
+### Verification
+- AST check: all `.py` files pass.
+- No new tests added for BD7/BD8 (GUI-adjacent features).
+
+### Remaining Tech Debt
+- **google.generativeai → google.genai migration**: the Gemini provider still uses the deprecated `google.generativeai` module. Only the `Google Gemini` provider is affected; Google Studio uses the OpenAI-compatible endpoint. A targeted `FutureWarning` filter silences the deprecation notice. Full migration requires a separate provider-only pass.
+- **yt-dlp JS runtime warning**: on machines without a JavaScript runtime, yt-dlp prints a warning about `--cookies-from-browser` being unavailable. This is cosmetic and does not affect downloads; the cookies feature was removed in BD3.
+- **Cloud STT as heat solution**: repeated batch transcription drives GPU temperature to 80–87 °C. The `ECO` preset helps, but the only fundamental solution is offloading transcription to a cloud STT provider (e.g. OpenAI Whisper API). No action taken.
+- **`gr.State` timer sync pattern**: the output-size label uses a workaround (`gr.State` variables synced from source components via `.change` events) because Gradio 6 timer callbacks don't expose `.value` on component objects. This is fragile — if the source components fire multiple `.change` events rapidly, state may desync.
+- **Requirements freeze**: `requirements.txt` uses lower-bound pins (`>=`), not exact versions. When a working venv is available, run `pip freeze` and pin the exact versions to prevent silent Gradio upgrades from breaking the UI again.
+
+---
+
+## Tech Debt Register (2026-07-26 cumulative)
+
+| ID | Debt | Last touched | Risk |
+| --- | --- | --- | --- |
+| D1 | Migrate `google.generativeai` → `google.genai` for Gemini provider | BB3, BD12 | Low — only one provider, `FutureWarning` is filtered |
+| D2 | yt-dlp JS runtime warning on cookie-less systems | BD3 | Cosmetic — no functional impact |
+| D3 | GPU heat from repeated transcription — evaluate cloud STT | BD8 | Medium — user comfort, hardware longevity |
+| D4 | Pin exact versions in `requirements.txt` from `pip freeze` | BD9 | Medium — silent Gradio upgrades can break the UI |
+| D5 | `gr.State` timer-sync pattern for output-size label | BD8 | Low — works but fragile across Gradio version bumps |
+| D6 | Theme toggle (light/dark) removed; CSS variables remain for reimplementation | BD13 | Low — cosmetic feature |
+
+Nothing was pushed.
