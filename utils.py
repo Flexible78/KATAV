@@ -81,6 +81,14 @@ def sanitize_srt_text(text: str) -> str:
     return text.strip()
 
 
+def _url_cache_dir() -> str:
+    """Return the dedicated URL audio cache directory."""
+    from config import DEFAULT_OUTPUT_DIR
+    cache = os.path.join(DEFAULT_OUTPUT_DIR, "_url_cache")
+    os.makedirs(cache, exist_ok=True)
+    return cache
+
+
 def clean_srt_text(text: str) -> str:
     """Strip SRT/VTT block numbers, timestamps, and tags, returning plain paragraphs.
 
