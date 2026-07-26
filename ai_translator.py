@@ -3,7 +3,8 @@ import re
 import time
 import glob
 import logging
-from typing import List, Tuple, Any
+import threading
+from typing import List, Tuple, Any, Set
 import gradio as gr
 import utils 
 from config import DEFAULT_OUTPUT_DIR, DEFAULT_SYSTEM_PROMPT, GEMMA_SYSTEM_PROMPT, CONFIG_FILE
@@ -30,6 +31,25 @@ try:
     GROQ_READY = True
 except ImportError: pass
 
+# Module-level guard to prevent concurrent translate_content runs.
+_translate_lock = threading.Lock()
+_translate_running = False
+
+
+def _ensure_singleton(func):
+    """Decorator ensuring only one translate_content runs at a time."""
+    def wrapper(*args, **kwargs):
+        global _translate_running
+        with _translate_lock:
+            if _translate_running:
+                return "[TRANSLATE] Already running, duplicate start ignored.", "", ""
+            _translate_running = True
+        try:
+            return func(*args, **kwargs)
+        finally:
+            _translate_running = False
+    return wrapper
+
 def _save_last_model(provider: str, model_name: str) -> None:
     """Save last successful model for provider into whisper_api_keys.json."""
     try:
@@ -46,13 +66,36 @@ def _save_last_model(provider: str, model_name: str) -> None:
     except Exception:
         pass
 
+
+def _prepare_files_to_translate(files_to_translate: List[str]) -> Tuple[List[str], int]:
+    """Deduplicate paths and drop files that are already translation outputs.
+
+    Returns the cleaned list and the number of already-translated files skipped.
+    """
+    # Deduplicate while preserving order.
+    seen_paths: Set[str] = set()
+    deduplicated: List[str] = []
+    for p in files_to_translate:
+        key = os.path.normcase(os.path.abspath(p))
+        if key in seen_paths:
+            continue
+        seen_paths.add(key)
+        deduplicated.append(p)
+
+    # Drop files that are already translation outputs.
+    filtered: List[str] = []
+    for p in deduplicated:
+        if "_TRANSLATED_" not in os.path.basename(p):
+            filtered.append(p)
+    skipped_translated = len(deduplicated) - len(filtered)
+    return filtered, skipped_translated
+@_ensure_singleton
 def translate_content(
     provider: str, current_api_key: str, target_langs: List[str], model_name: str,
     sys_prompt: str, custom_srt_files: List[Any], srt_local_path: str,
     hidden_actual_out_dir: str, hidden_srt_paths: str, translate_mode: str, plain_text_input: str,
     force_all_langs: bool = False
 ) -> Tuple[str, str, str]: # 🚀 Возвращаем три параметра!
-    
     if getattr(utils, 'stop_requested', False):
         return "⚠️ Translation cancelled before start.", "", ""
 
@@ -83,8 +126,10 @@ def translate_content(
     def live_log(msg: str):
         utils.log_to_terminal(msg); utils.log_queue.put(msg + "\n")
 
-    if not api_key and provider != "Local Proxy (127.0.0.1)": return "❌ Error: No API key specified!", "", ""
-    if not model_name or not model_name.strip(): return "❌ Error: No model selected! Click 🔄 to refresh models.", "", ""
+    if not api_key and provider != "Local Proxy (127.0.0.1)":
+        return "❌ Error: No API key specified!", "", ""
+    if not model_name or not model_name.strip():
+        return "❌ Error: No model selected! Click 🔄 to refresh models.", "", ""
 
     is_file_mode = (translate_mode == "Files")
     files_to_translate = []
@@ -103,9 +148,14 @@ def translate_content(
             for f in custom_srt_files:
                 fname = f.name if hasattr(f, 'name') else str(f)
                 if fname.lower().endswith(valid_exts): files_to_translate.append(fname)
-        elif hidden_srt_paths:
+        if hidden_srt_paths:
             for p in hidden_srt_paths.split('|'):
                 if p.strip() and os.path.isfile(p.strip()) and p.strip().lower().endswith(valid_exts): files_to_translate.append(p.strip())
+
+        files_to_translate, skipped_translated = _prepare_files_to_translate(files_to_translate)
+        if skipped_translated > 0:
+            live_log(f"[TRANSLATE] Skipped {skipped_translated} already translated file(s).")
+
         if not files_to_translate:
             if not hidden_srt_paths.strip() and not srt_local_path.strip() and not custom_srt_files:
                 return "❌ Error: Transcription produced no supported files to translate. Check the LIVE LOG for items that failed to produce output.", "", ""
@@ -116,7 +166,9 @@ def translate_content(
 
     saved_files = []
     all_clean_editor_text = ""
-    
+    files_written_count = 0
+    processed_pairs: Set[Tuple[str, str]] = set()
+
     try:
         live_log(f"=== TESTING API CONNECTION ({provider}) ===")
         logging.info(f"[CHECK_API] Start check | Provider: {provider} | Model: {model_name}")
@@ -246,7 +298,7 @@ def translate_content(
     for file_idx, (fpath, original_text, base_name, out_dir, chunks, is_srt) in enumerate(file_chunks_map):
         if getattr(utils, 'stop_requested', False): break
         
-        utils.log_queue.put(f"[PROGRESS_FILE] | {file_idx} | {len(file_chunks_map)}\n")
+        utils.log_queue.put(f"[PROGRESS_FILE] | {file_idx + 1} | {len(file_chunks_map)} | {base_name} | running\n")
         live_log(f"\n🚀 [BATCH TRANSLATE] File: {base_name} | 🧠 Model: {model_name}")
         
         if not target_langs:
@@ -261,6 +313,12 @@ def translate_content(
             
         for target_lang in target_langs:
             if getattr(utils, 'stop_requested', False): break
+
+            pair_key = (os.path.normcase(os.path.abspath(fpath)) if fpath != "PLAIN_TEXT" else fpath, target_lang)
+            if pair_key in processed_pairs:
+                live_log(f"[TRANSLATE] Duplicate target skipped: {base_name} -> {target_lang}.")
+                continue
+            processed_pairs.add(pair_key)
             
             matched_tokens = _matched_language_tokens(base_name, target_lang)
             if matched_tokens and not force_all_langs:
@@ -447,6 +505,7 @@ def translate_content(
                 try:
                     with open(translated_path, "w", encoding="utf-8") as f: f.write(final_translated_text)
                     saved_files.append(translated_path)
+                    files_written_count += 1
                     
                     clean_text = final_translated_text
                     if is_srt:
@@ -457,7 +516,7 @@ def translate_content(
 
     if not getattr(utils, 'stop_requested', False):
         live_log("\n✅ ENTIRE BATCH TRANSLATED!")
-        utils.log_queue.put(f"[PROGRESS_FILE] | {len(file_chunks_map)} | {len(file_chunks_map)}\n")
+        utils.log_queue.put(f"[PROGRESS_FILE] | {len(file_chunks_map)} | {len(file_chunks_map)} | done | done\n")
         # Log [RESULT] lines for every translated file written
         for sf in saved_files:
             if "_TRANSLATED_" in sf:
@@ -466,7 +525,9 @@ def translate_content(
                     lang_code = match.group(1)
                     live_log(f"[RESULT] {lang_code} -> {sf}")
 
-    status_msg = f"{'⚠️ Interrupted. Partial progress saved' if getattr(utils, 'stop_requested', False) else '✅ Completed'}: {len(saved_files)} files." 
+        live_log(f"[TRANSLATE] Batch finished: {len(file_chunks_map)} file(s), {len(target_langs)} language(s), {files_written_count} file(s) written.")
+
+    status_msg = f"{'⚠️ Interrupted. Partial progress saved' if getattr(utils, 'stop_requested', False) else '✅ Completed'}: {len(saved_files)} files."
     # 🚀 Возвращаем ТРИ переменные (третья - список путей к SRT через |)
     return status_msg, all_clean_editor_text, "|".join(saved_files)
 
