@@ -80,12 +80,16 @@ def prepare_start(
     hotwords_val: str, temperature_val: float, rep_penalty_val: float,
     beam_size_val: float, patience_val: float, condition_on_prev_val: bool,
     no_speech_thresh_val: float, use_sentence_val: bool, use_print_progress_val: bool,
-    use_beep_off_val: bool, use_custom_output_val: bool, output_dir_val: str
+    use_beep_off_val: bool, use_custom_output_val: bool, output_dir_val: str,
+    cookie_browser_val: str = "None"
 ):
     global batch_items, batch_total, batch_completed, batch_failed, batch_current_name, batch_current_idx
     utils.stop_requested = False
     batch_items = []; batch_total = 0; batch_completed = 0; batch_failed = 0
     batch_current_name = ""; batch_current_idx = 0
+
+    # Persist cookie browser choice
+    ui_state.save_settings({"whisper_cookie_browser": cookie_browser_val})
 
     # ── Build queue in QueueManager ──
     utils.log_queue.put("[STAGE] Building queue...\n")
@@ -508,6 +512,11 @@ def build_app():
                     )
                     add_url_btn = gr.Button("➕ ADD URL", variant="secondary", elem_classes=["fixed-height-btn"], scale=1, min_width=40)
                     paste_url_btn = gr.Button("📋 PASTE URL", variant="secondary", elem_classes=["fixed-height-btn"], scale=1, min_width=40)
+                cookie_browser = gr.Dropdown(
+                    choices=["None", "chrome", "edge", "firefox", "yandex"],
+                    value=ui_state.get("whisper_cookie_browser", "None"),
+                    label="🍪 COOKIES FROM BROWSER (for age-restricted videos)"
+                )
                 
                 with gr.Row(elem_classes=["uniform-row"]):
                     manual_path = gr.Textbox(
@@ -894,7 +903,8 @@ def build_app():
             language, model_size, compute_type, temperature, rep_penalty, 
             beam_size, patience, condition_on_prev, no_speech_thresh, 
             use_sentence, use_print_progress, use_vad_filter, use_beep_off, 
-            use_custom_output, output_folder, output_formats, save_audio_track
+            use_custom_output, output_folder, output_formats, save_audio_track,
+            cookie_browser
         ]
 
         # ── All settings for snapshot ──
@@ -906,7 +916,8 @@ def build_app():
             hotwords, temperature, rep_penalty,
             beam_size, patience, condition_on_prev,
             no_speech_thresh, use_sentence, use_print_progress,
-            use_beep_off, use_custom_output, output_folder
+            use_beep_off, use_custom_output, output_folder,
+            cookie_browser
         ]
 
         check_api_btn.click(

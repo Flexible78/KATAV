@@ -3,9 +3,13 @@ import subprocess
 import threading
 import re
 import time
+import shutil
+import sys
 from pathlib import Path
 from typing import List, Tuple, Any
 import gradio as gr
+
+import utils
 
 try:
     import yt_dlp
@@ -45,13 +49,105 @@ def _gpu_power_limit_restore(prev):
     except Exception:
         pass
 
+
+def _strip_ansi(text: str) -> str:
+    """Remove ANSI escape sequences from yt-dlp output."""
+    return re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', text)
+
+
+def _download_url_to_queue(
+    url: str, output_dir: str, cookie_browser: str,
+    files_to_process: List[Any], downloaded_audio_files: List[Any]
+):
+    """Download a single URL via yt-dlp CLI (subprocess), stream output, and queue the result."""
+    log_queue.put(f"⬇️ Downloading: {url}\n")
+
+    is_playlist = "/playlist?" in url or "list=" in url
+    temp_dir = os.path.join(output_dir, f".ytdlp_{os.getpid()}_{int(time.time()*1000)}")
+    os.makedirs(temp_dir, exist_ok=True)
+
+    cmd = [
+        sys.executable, "-m", "yt_dlp",
+        "--no-warnings",
+        "-f", "bestaudio/best",
+        "-o", "%(title)s.%(ext)s",
+        "--progress",
+    ]
+    if not is_playlist:
+        cmd.append("--no-playlist")
+    if cookie_browser and cookie_browser != "None":
+        cmd.extend(["--cookies-from-browser", cookie_browser])
+    cmd.append(url)
+
+    process = None
+    try:
+        process = subprocess.Popen(
+            cmd, cwd=temp_dir, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, encoding="utf-8", errors="replace", bufsize=1,
+            creationflags=0x08000000 if os.name == "nt" else 0,
+        )
+        utils.current_process = process
+
+        for raw_line in process.stdout:
+            if utils.stop_requested:
+                process.terminate()
+                try:
+                    process.wait(timeout=3)
+                except Exception:
+                    try:
+                        process.kill()
+                    except Exception:
+                        pass
+                log_queue.put("🛑 Download cancelled by user.\n")
+                break
+            line = _strip_ansi(raw_line).strip()
+            if line:
+                log_queue.put(line + "\n")
+                lower = line.lower()
+                if "sign in" in lower or "signin" in lower:
+                    log_queue.put("[ERROR] YouTube requires sign-in for this video. Set COOKIES FROM BROWSER and retry.\n")
+                elif "age-restricted" in lower or "age restricted" in lower:
+                    log_queue.put("[ERROR] YouTube requires sign-in for this video. Set COOKIES FROM BROWSER and retry.\n")
+
+        if not utils.stop_requested:
+            process.wait(timeout=10)
+            if process.returncode == 0:
+                downloaded = [os.path.join(temp_dir, f) for f in os.listdir(temp_dir) if os.path.isfile(os.path.join(temp_dir, f))]
+                for f in downloaded:
+                    dest = os.path.join(output_dir, os.path.basename(f))
+                    if os.path.abspath(f) != os.path.abspath(dest):
+                        try:
+                            os.replace(f, dest)
+                        except Exception:
+                            shutil.move(f, dest)
+                    if os.path.exists(dest):
+                        files_to_process.append(dest)
+                        downloaded_audio_files.append(dest)
+                        log_queue.put(f"✅ Successfully extracted: {os.path.basename(dest)}\n")
+            else:
+                err_msg = f"yt-dlp exited with code {process.returncode} for URL: {url}"
+                log_queue.put(f"❌ {err_msg}\n")
+    except Exception as e:
+        log_queue.put(f"❌ URL download error for {url}: {e}\n")
+    finally:
+        try:
+            for f in os.listdir(temp_dir):
+                fp = os.path.join(temp_dir, f)
+                if os.path.exists(fp):
+                    os.remove(fp)
+            os.rmdir(temp_dir)
+        except Exception:
+            pass
+        utils.current_process = None
+
 def run_transcription(
     input_files: List[Any], manual_path: str, urls_input: str, initial_prompt: str, hotwords: str,
     vad_method: str, language: str, model_size: str, compute_type: str,
     temperature: float, rep_penalty: float, beam_size: float, patience: float,
     condition_on_prev: bool, no_speech_thresh: float, use_sentence: bool,
     use_print_progress: bool, use_vad_filter: bool, use_beep_off: bool,
-    use_custom_output: bool, output_dir: str, output_formats: List[str], save_audio_track: bool
+    use_custom_output: bool, output_dir: str, output_formats: List[str], save_audio_track: bool,
+    cookie_browser: str = "None"
 ) -> Tuple[gr.update, gr.update, gr.update, str, str, str]:
     global process_active, current_process, current_percent, time_elapsed, time_remaining, audio_speed, full_whisper_log, stop_requested, current_action
     
@@ -62,7 +158,8 @@ def run_transcription(
         "whisper_beam": beam_size, "whisper_patience": patience, "whisper_cond": condition_on_prev, "whisper_nospeech": no_speech_thresh,
         "whisper_formats": output_formats, "whisper_sentence": use_sentence, "whisper_progress": use_print_progress,
         "whisper_vadfilter": use_vad_filter, "whisper_beep": use_beep_off,
-        "whisper_save_audio_track": save_audio_track
+        "whisper_save_audio_track": save_audio_track,
+        "whisper_cookie_browser": cookie_browser
     })
 
     if process_active: return gr.update(value="⚠️ A process is already running!"), gr.update(), gr.update(), "", "", ""
@@ -99,25 +196,13 @@ def run_transcription(
         else:
             urls = [u.strip() for u in urls_input.split('\n') if u.strip()]
             if urls:
-                log_queue.put(f"⏳ Downloading audio from {len(urls)} links (yt-dlp)...\n")
-                ydl_opts = {
-                    'format': 'bestaudio/best', 
-                    'outtmpl': os.path.join(global_out_dir, '%(title)s.%(ext)s'),
-                    'quiet': True, 'no_warnings': True
-                }
-                try:
-                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                        for url in urls:
-                            if stop_requested: break
-                            log_queue.put(f"⬇️ Downloading: {url}\n")
-                            info = ydl.extract_info(url, download=True)
-                            dl_filename = ydl.prepare_filename(info)
-                            if os.path.exists(dl_filename):
-                                files_to_process.append(dl_filename)
-                                downloaded_audio_files.append(dl_filename)
-                                log_queue.put(f"✅ Successfully extracted: {os.path.basename(dl_filename)}\n")
-                except Exception as e:
-                    log_queue.put(f"❌ URL download error: {e}\n")
+                log_queue.put(f"[STAGE] Downloading audio from {len(urls)} URL(s) (yt-dlp)...\n")
+                for url in urls:
+                    if stop_requested: break
+                    _download_url_to_queue(
+                        url, global_out_dir, cookie_browser,
+                        files_to_process, downloaded_audio_files
+                    )
                     
     files_to_process = list(set(files_to_process))
     
