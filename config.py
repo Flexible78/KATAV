@@ -102,13 +102,32 @@ TARGET_LANGUAGE_CODE_MAP = {
 # 4. КАСТОМНЫЕ СТИЛИ (CSS) ДЛЯ ВЕБ-ИНТЕРФЕЙСА
 # ==============================================================================
 custom_css = """
+:root {
+    --katav-bg: #2d2d30;
+    --katav-panel: rgba(30, 30, 32, 0.9);
+    --katav-text: #e4e4e7;
+    --katav-muted: #71717a;
+    --katav-accent: #ea580c;
+    --katav-border: #52525b;
+}
+
+body.katav-light, body.katav-light .gradio-container {
+    --katav-bg: #f4f4f5;
+    --katav-panel: rgba(255, 255, 255, 0.95);
+    --katav-text: #18181b;
+    --katav-muted: #52525b;
+    --katav-accent: #c2410c;
+    --katav-border: #d4d4d8;
+}
+
 body, .gradio-container {
-    background-color: #2d2d30 !important;
+    background-color: var(--katav-bg) !important;
     background-image: repeating-linear-gradient(90deg, rgba(0,0,0,0.05) 0px, rgba(0,0,0,0.05) 2px, transparent 2px, transparent 4px) !important;
-    color: #e4e4e7 !important;
+    color: var(--katav-text) !important;
     font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif !important;
-    max-width: 98% !important; 
-    padding: 10px !important; 
+    max-width: 98% !important;
+    padding: 10px !important;
+    transition: background-color 0.3s ease, color 0.3s ease;
 }
 .gap-4 { gap: 8px !important; }
 .p-4 { padding: 12px !important; }
@@ -117,7 +136,7 @@ body, .gradio-container {
 .micro-title {
     text-align: right !important;
     font-size: 11px !important;
-    color: #71717a !important;
+    color: var(--katav-muted) !important;
     margin-bottom: -15px !important;
     margin-top: -5px !important;
     text-transform: uppercase;
@@ -126,13 +145,13 @@ body, .gradio-container {
 
 .fixed-height-btn {
     height: 48px !important;
-    font-size: 11px !important; 
+    font-size: 11px !important;
     line-height: 1.1 !important;
     white-space: normal !important;
     text-align: center !important;
     padding: 2px 5px !important;
     border-radius: 8px !important;
-    border: 1px solid #404040 !important;
+    border: 1px solid var(--katav-border) !important;
     background: linear-gradient(180deg, #3f3f46 0%, #1e293b 100%) !important;
     color: #f8fafc !important;
     box-shadow: inset 0 1px 0 rgba(255,255,255,0.1), 0 2px 4px rgba(0,0,0,0.4) !important;
@@ -140,15 +159,23 @@ body, .gradio-container {
     font-weight: 600 !important;
     transition: all 0.2s ease !important;
 }
+body.katav-light .fixed-height-btn {
+    background: linear-gradient(180deg, #f4f4f5 0%, #e4e4e7 100%) !important;
+    color: #18181b !important;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.8), 0 2px 4px rgba(0,0,0,0.1) !important;
+}
 .fixed-height-btn:hover {
     transform: translateY(-1px);
     box-shadow: inset 0 1px 0 rgba(255,255,255,0.2), 0 4px 8px rgba(0,0,0,0.5) !important;
     background: linear-gradient(180deg, #4b5563 0%, #334155 100%) !important;
 }
+body.katav-light .fixed-height-btn:hover {
+    background: linear-gradient(180deg, #ffffff 0%, #d4d4d8 100%) !important;
+}
 
 #start_btn, #start_full_btn {
     background: linear-gradient(180deg, #c2410c 0%, #9a3412 100%) !important;
-    border: 1px solid #ea580c !important;
+    border: 1px solid var(--katav-accent) !important;
     color: #fff !important;
     text-shadow: 0 1px 2px rgba(0,0,0,0.5);
     box-shadow: inset 0 1px 0 rgba(255,255,255,0.2), inset 0 0 10px rgba(0,0,0,0.2), 0 3px 6px rgba(0,0,0,0.4) !important;
@@ -162,31 +189,51 @@ body, .gradio-container {
     background: linear-gradient(180deg, #4c1d95 0%, #312e81 100%) !important;
     border: 1px solid #6d28d9 !important;
 }
+body.katav-light #stop_btn, body.katav-light #exit_btn {
+    background: linear-gradient(180deg, #7c3aed 0%, #5b21b6 100%) !important;
+    color: #fff !important;
+}
 #stop_btn:hover, #exit_btn:hover {
     background: linear-gradient(180deg, #5b21b6 0%, #3730a3 100%) !important;
 }
 
 .translate-box, .file-manager {
-    background-color: rgba(30, 30, 32, 0.85) !important;
+    background-color: var(--katav-panel) !important;
     background-image: repeating-linear-gradient(90deg, rgba(255,255,255,0.01) 0px, rgba(255,255,255,0.01) 2px, transparent 2px, transparent 4px) !important;
-    border: 1px solid #3f3f46 !important;
+    border: 1px solid var(--katav-border) !important;
     border-radius: 12px !important;
     padding: 15px !important;
     box-shadow: inset 0 0 20px rgba(0,0,0,0.3), 0 4px 10px rgba(0,0,0,0.2) !important;
     margin-bottom: 5px !important;
 }
+body.katav-light .translate-box, body.katav-light .file-manager {
+    box-shadow: inset 0 0 20px rgba(0,0,0,0.05), 0 4px 10px rgba(0,0,0,0.1) !important;
+}
 
 .big-text textarea {
     background: rgba(15, 15, 15, 0.6) !important;
-    border: 1px solid #52525b !important;
-    color: #e4e4e7 !important;
+    border: 1px solid var(--katav-border) !important;
+    color: var(--katav-text) !important;
     font-size: 15px !important;
     border-radius: 8px !important;
 }
+body.katav-light .big-text textarea {
+    background: rgba(255, 255, 255, 0.9) !important;
+    color: #18181b !important;
+}
 
-.status-running { border: 2px solid #ea580c !important; box-shadow: 0 0 15px rgba(234, 88, 12, 0.5) !important; }
+.status-running { border: 2px solid var(--katav-accent) !important; box-shadow: 0 0 15px rgba(234, 88, 12, 0.5) !important; }
 .status-done { border: 2px solid #10b981 !important; box-shadow: 0 0 15px rgba(16, 185, 129, 0.3) !important; }
 .status-error { border: 2px solid #e11d48 !important; box-shadow: 0 0 15px rgba(225, 29, 72, 0.3) !important; }
+
+#log_group .wrap {
+    background: rgba(15, 15, 15, 0.6) !important;
+    border: 1px solid var(--katav-border) !important;
+}
+body.katav-light #log_group .wrap {
+    background: rgba(255, 255, 255, 0.9) !important;
+    color: #18181b !important;
+}
 """
 
 # ==============================================================================
