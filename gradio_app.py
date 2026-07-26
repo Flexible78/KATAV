@@ -1,3 +1,5 @@
+import os
+os.environ.setdefault("GRADIO_ANALYTICS_ENABLED", "False")
 import gradio as gr
 import webbrowser
 import os
@@ -442,9 +444,8 @@ def process_logs(current_log: str):
         overall_pct = int(((batch_completed + batch_failed) / max(batch_total, 1)) * 100) if batch_total > 0 else current_percent
 
     batch_header_html = f"""        <div style="display: flex; justify-content: space-between; margin-bottom: 6px; font-weight: bold; font-size: 14px; color: #f4f4f5; text-transform: uppercase;">
-            <span>{current_action}</span>
-            <span style="color: #ea580c;">{overall_pct}%</span>
-            <span style="font-size:10px;color:#71717a;font-weight:normal;">{batch_completed + batch_failed}/{max(batch_total,1)}</span>
+            <span>📊 {current_action} <span style="font-size:10px;color:#71717a;font-weight:normal;">{batch_completed + batch_failed}/{max(batch_total,1)}</span></span>
+            <span style="color: #f97316;">{overall_pct}%</span>
         </div>"""
     overall_progress_html = f"""        <div style="width: 100%; background-color: #18181b; border-radius: 6px; overflow: hidden; height: 18px; border: 1px solid #27272a; margin-bottom: 8px;">
             <div style="width: {overall_pct}%; height: 100%; background: linear-gradient(90deg, #9a3412, #ea580c); transition: width 0.3s ease;"></div>
@@ -455,10 +456,10 @@ def process_logs(current_log: str):
         {batch_header_html}
         {overall_progress_html}
         <div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 6px; margin-top: 8px;">
-            <div style="text-align:center;"><div style="font-size:9px;color:#71717a;text-transform:uppercase;">Elapsed</div><div style="color:#d4d4d8;font-family:monospace;font-size:13px;font-weight:700;">{time_elapsed}</div></div>
-            <div style="text-align:center;"><div style="font-size:9px;color:#71717a;text-transform:uppercase;">ETA</div><div style="color:#f87171;font-family:monospace;font-size:13px;font-weight:700;">{eta_display}</div></div>
-            <div style="text-align:center;"><div style="font-size:9px;color:#71717a;text-transform:uppercase;">Speed</div><div style="color:#34d399;font-family:monospace;font-size:13px;font-weight:700;">{audio_speed}</div></div>
-            <div style="text-align:center;"><div style="font-size:9px;color:#71717a;text-transform:uppercase;" title="Total duration of all known items in the queue.">Total Audio</div><div style="color:#a78bfa;font-family:monospace;font-size:13px;font-weight:700;">{batch_dur_display}</div></div>
+            <div style="text-align:center;"><div style="font-size:9px;color:#71717a;text-transform:uppercase;">⏱ Elapsed</div><div style="color:#d4d4d8;font-family:monospace;font-size:13px;font-weight:700;">{time_elapsed}</div></div>
+            <div style="text-align:center;"><div style="font-size:9px;color:#71717a;text-transform:uppercase;">⌛ ETA</div><div style="color:#f87171;font-family:monospace;font-size:13px;font-weight:700;">{eta_display}</div></div>
+            <div style="text-align:center;"><div style="font-size:9px;color:#71717a;text-transform:uppercase;">⚡ Speed</div><div style="color:#34d399;font-family:monospace;font-size:13px;font-weight:700;">{audio_speed}</div></div>
+            <div style="text-align:center;"><div style="font-size:9px;color:#71717a;text-transform:uppercase;" title="Total duration of all known items in the queue.">🎧 Total Audio</div><div style="color:#a78bfa;font-family:monospace;font-size:13px;font-weight:700;">{batch_dur_display}</div></div>
         </div>
         {batch_panel_html}{shutdown_html}
     </div>
@@ -583,7 +584,7 @@ def build_app():
             # ==================== ЛЕВАЯ КОЛОНКА ====================
             with gr.Column(scale=5, min_width=420):
                 
-                with gr.Accordion("SOURCES", open=True):
+                with gr.Accordion("📁 SOURCES", open=True):
                     urls_input = gr.Textbox(
                         label="URLS (one per line)",
                         value=ui_state.get("whisper_urls", ""),
@@ -599,8 +600,8 @@ def build_app():
                     with gr.Row(elem_classes=["uniform-row"]):
                         add_url_btn = gr.Button("+ URL", variant="secondary", elem_classes=["service-btn"], scale=1, min_width=40)
                         add_playlist_btn = gr.Button("+ PLAYLIST", variant="secondary", elem_classes=["service-btn"], scale=1, min_width=40)
-                        paste_url_btn = gr.Button("PASTE", variant="secondary", elem_classes=["service-btn"], scale=1, min_width=40, title="Paste URL from clipboard into the NEW URL field")
-                        clear_media_btn = gr.Button("CLEAR", variant="secondary", elem_classes=["service-btn"], scale=1, min_width=40, title="Clear all sources and URL fields")
+                        paste_url_btn = gr.Button("PASTE", variant="secondary", elem_classes=["service-btn"], scale=1, min_width=40)
+                        clear_media_btn = gr.Button("CLEAR", variant="secondary", elem_classes=["service-btn"], scale=1, min_width=40)
                     
                     with gr.Row(elem_classes=["uniform-row"]):
                         manual_path = gr.Textbox(
@@ -609,9 +610,9 @@ def build_app():
                             scale=5
                         )
                     with gr.Row(elem_classes=["uniform-row"]):
-                        paste_btn = gr.Button("PASTE", variant="secondary", elem_classes=["fixed-height-btn"], scale=1, min_width=40, title="Paste file/folder paths from clipboard")
-                        file_btn = gr.Button("FILE", variant="secondary", elem_classes=["fixed-height-btn"], scale=1, min_width=40)
-                        folder_batch_btn = gr.Button("DIR", variant="secondary", elem_classes=["fixed-height-btn"], scale=1, min_width=40)
+                        paste_btn = gr.Button("PASTE", variant="secondary", elem_classes=["service-btn"], scale=1, min_width=40)
+                        file_btn = gr.Button("FILE", variant="secondary", elem_classes=["service-btn"], scale=1, min_width=40)
+                        folder_batch_btn = gr.Button("DIR", variant="secondary", elem_classes=["service-btn"], scale=1, min_width=40)
                     
                     input_file = gr.File(
                         label="Drop files here", 
@@ -630,7 +631,7 @@ def build_app():
                         signin_google_btn = gr.Button("SIGN IN TO GOOGLE", variant="secondary", elem_classes=["fixed-height-btn"], scale=1, min_width=40)
                     signin_google_btn.click(fn=sign_in_to_google_drive, outputs=drive_status, queue=False)
                 
-                with gr.Accordion("OUTPUT", open=False):
+                with gr.Accordion("📤 OUTPUT", open=False):
                     with gr.Row():
                         use_custom_output = gr.Checkbox(
                             label="USE CUSTOM OUTPUT DIR", 
@@ -649,7 +650,7 @@ def build_app():
                     with gr.Row():
                         save_audio_track = gr.Checkbox(label="SAVE MP3", value=False, elem_id="save_audio_track")
 
-                with gr.Accordion("WHISPER", open=False):
+                with gr.Accordion("🎛️ WHISPER", open=False):
                     with gr.Row():
                         language = gr.Dropdown(choices=["auto", "he", "ru", "en"], value=ui_state.get("whisper_language", "auto"), label="LANGUAGE")
                         vad_method = gr.Dropdown(choices=["pyannote_v3", "silero_v3", "No VAD"], value=ui_state.get("whisper_vad", "pyannote_v3"), label="VAD")
@@ -659,7 +660,7 @@ def build_app():
                     with gr.Row():
                         eco_btn = gr.Button("ECO (quiet/cool)", elem_classes=["fixed-height-btn"])
                     
-                    with gr.Accordion("ADVANCED SETTINGS", open=False):
+                    with gr.Accordion("⚙️ ADVANCED SETTINGS", open=False):
                         initial_prompt = gr.Textbox(label="CONTEXT (-prompt)", value=ui_state.get("whisper_prompt", "auto"))
                         hotwords = gr.Textbox(label="HOTWORDS (--hotwords)", value=ui_state.get("whisper_hotwords", ""))
                         temperature = gr.Slider(minimum=0.0, maximum=1.0, step=0.1, value=ui_state.get("whisper_temp", 0.0), label="TEMPERATURE")
@@ -676,7 +677,7 @@ def build_app():
                         use_vad_filter = gr.Checkbox(label="VAD", value=ui_state.get("whisper_vadfilter", True))
                         use_beep_off = gr.Checkbox(label="NO BEEPS", value=ui_state.get("whisper_beep", True))
 
-                with gr.Accordion("TRANSLATION", open=False):
+                with gr.Accordion("🌐 TRANSLATION", open=False):
                     with gr.Column(elem_classes=["translate-box"]):
                         
                         api_provider_val = ui_state.get("trans_provider", "Local Proxy (127.0.0.1)")
@@ -736,14 +737,14 @@ def build_app():
                             
                         export_json_status = gr.Textbox(label="VOCAB STATUS", lines=2, interactive=False)
 
-                with gr.Accordion("LEARNING", open=False):
+                with gr.Accordion("📚 LEARNING", open=False):
                     with gr.Row():
-                        use_study_deck = gr.Checkbox(label="STUDY DECK", value=False, title="Build a frequency-based study deck from the transcript")
+                        use_study_deck = gr.Checkbox(label="STUDY DECK", value=False)
                         study_min_count = gr.Number(value=2, label="MIN COUNT", precision=0, minimum=1, scale=1)
                         study_max_terms = gr.Number(value=300, label="MAX TERMS", precision=0, minimum=10, scale=1)
 
                 with gr.Row(elem_classes=["uniform-row"]):
-                    skip_done_checkbox = gr.Checkbox(label="SKIP DONE", value=True, title="Skip files that already have output in the selected formats")
+                    skip_done_checkbox = gr.Checkbox(label="SKIP DONE", value=True)
                     retry_failed_btn = gr.Button("RETRY FAILED", variant="secondary", elem_classes=["fixed-height-btn"], min_width=40)
                 
                 with gr.Row(elem_classes=["uniform-row"]):
@@ -762,7 +763,7 @@ def build_app():
                     shutdown_checkbox = gr.Checkbox(label="Shut down Windows after batch completes", value=False, elem_id="shutdown_cb")
                     cancel_shutdown_btn = gr.Button("CANCEL SHUTDOWN", variant="stop", elem_classes=["fixed-height-btn"], visible=False, min_width=40)
                 
-                with gr.Accordion("CLEAN OUTPUT DIRECTORY", open=False):
+                with gr.Accordion("🗑 CLEAN OUTPUT DIRECTORY", open=False):
                     with gr.Row(elem_classes=["file-manager"]):
                         with gr.Column(scale=3):
                             files_to_delete = gr.CheckboxGroup(choices=[], label="SELECT FILES TO DELETE")
@@ -794,7 +795,7 @@ def build_app():
                     
                     save_status = gr.Markdown("")
                     
-                    with gr.Accordion("SYSTEM PROMPT", open=False):
+                    with gr.Accordion("💬 SYSTEM PROMPT", open=False):
                         sys_prompt = gr.Textbox(label="PROMPT", value=ui_state.get("trans_prompt", GEMMA_SYSTEM_PROMPT), lines=5, show_label=False)
                 
                 # ── Batch results (BC6) ──

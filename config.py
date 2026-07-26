@@ -302,6 +302,87 @@ body.katav-light #log_group .wrap {
     background: rgba(255, 255, 255, 0.9) !important;
     color: #18181b !important;
 }
+
+/* ═══ LECTA-LIKE CARD STYLING (BE3) ═══ */
+.katav-card {
+    background: rgba(30, 41, 59, 0.6) !important;
+    border: 1px solid #334155 !important;
+    border-radius: 8px !important;
+    padding: 12px !important;
+    margin-bottom: 10px !important;
+}
+body.katav-light .katav-card {
+    background: rgba(248, 250, 252, 0.9) !important;
+    border-color: #cbd5e1 !important;
+}
+.katav-card h3, .katav-card-header {
+    color: #f8fafc !important;
+    font-size: 14px !important;
+    font-weight: 700 !important;
+    text-transform: uppercase !important;
+    margin: 0 0 8px 0 !important;
+    border-bottom: 1px solid #334155 !important;
+    padding-bottom: 6px !important;
+}
+body.katav-light .katav-card h3, body.katav-light .katav-card-header {
+    color: #1e293b !important;
+    border-bottom-color: #cbd5e1 !important;
+}
+
+/* Progress bar in card — full width, LECTA-style */
+.katav-progress-bar {
+    width: 100% !important;
+    background-color: #0f172a !important;
+    border-radius: 8px !important;
+    overflow: hidden !important;
+    height: 20px !important;
+    box-shadow: inset 0 2px 4px rgba(0,0,0,0.5) !important;
+    margin-bottom: 8px !important;
+}
+.katav-progress-fill {
+    height: 100% !important;
+    background: linear-gradient(90deg, #ea580c, #f97316) !important;
+    transition: width 0.3s ease !important;
+}
+
+/* Metrics row — one line, monospace, emoji icons */
+.katav-metrics-row {
+    display: flex !important;
+    justify-content: space-between !important;
+    margin-top: 8px !important;
+    color: #94a3b8 !important;
+    font-family: 'Consolas', 'Courier New', monospace !important;
+    font-size: 13px !important;
+}
+
+/* Multi-line text fields — prevent single-line scrollbar */
+.katav-card textarea {
+    min-height: 60px !important;
+}
+
+/* Accordion restyling as cards (BE3: keeps collapse, looks like card) */
+.gr-accordion {
+    background: rgba(30, 41, 59, 0.6) !important;
+    border: 1px solid #334155 !important;
+    border-radius: 8px !important;
+    margin-bottom: 10px !important;
+}
+body.katav-light .gr-accordion {
+    background: rgba(248, 250, 252, 0.9) !important;
+    border-color: #cbd5e1 !important;
+}
+.gr-accordion > .label-wrap {
+    padding: 10px 12px !important;
+}
+.gr-accordion > .label-wrap > span:first-child {
+    color: #f8fafc !important;
+    font-size: 13px !important;
+    font-weight: 700 !important;
+    text-transform: uppercase !important;
+}
+body.katav-light .gr-accordion > .label-wrap > span:first-child {
+    color: #1e293b !important;
+}
 """
 
 # ==============================================================================
