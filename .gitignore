@@ -79,3 +79,6 @@ libs/run_whisper.py
 
 # Local git bundle backups (do not push)
 *.bundle
+
+# Local-only speech/presentation notes (do not push)
+SPEECH_PROTECT_2MIN.local.md
