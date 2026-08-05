@@ -3,7 +3,7 @@
 This guide assumes **zero experience**: no Python, no terminal, no Git.
 Just follow the steps in order. Total time: about 15-25 minutes.
 
-Russian version of this guide: **[INSTALL_WINDOWS_RU.md](INSTALL_WINDOWS_RU.md)**
+Other languages: **[Русский](INSTALL_WINDOWS_RU.md)** · **[עברית](INSTALL_WINDOWS_HE.md)**
 
 If something breaks, go to [Problems and fixes](#problems-and-fixes) at the bottom.
 
@@ -98,6 +98,62 @@ Other ways to point KATAV at the file are described in [SETUP.md](SETUP.md).
 
 A blue/black window opens and the first line already ends with `C:\KATAV`. All commands below are typed in this window (paste with right-click).
 
+### Other ways to open the terminal
+
+1. Press **Win**, type `powershell`, press **Enter**. Then move into the project folder yourself:
+
+   ```powershell
+   cd C:\KATAV
+   ```
+
+2. Press **Win + X** and choose **Terminal** or **Windows PowerShell**.
+3. In File Explorer hold **Shift**, right-click empty space inside the folder, and choose **Open PowerShell window here** / **Open in Terminal**.
+
+### PowerShell or Command Prompt (cmd)?
+
+All commands in this guide are written for **PowerShell** (the default terminal in Windows 10/11). If you prefer the old **Command Prompt** (`cmd`), everything is the same except activating the environment:
+
+| Terminal | Activation command |
+| --- | --- |
+| PowerShell | `.venv\Scripts\Activate.ps1` |
+| Command Prompt (cmd) | `.venv\Scripts\activate.bat` |
+
+### How to run the terminal as Administrator
+
+**In most cases you do not need this** - see the next section first. If you do need it:
+
+1. Press **Win** and type `powershell` (or `cmd`).
+2. On the right of the search result click **Run as administrator**. Keyboard shortcut: **Ctrl + Shift + Enter**.
+   - Alternative: **Win + X**, then **Terminal (Admin)** / **Windows PowerShell (Admin)**.
+3. Confirm the Windows UAC prompt (**Yes**).
+4. An administrator window always opens in `C:\Windows\System32`, so go to the project folder first:
+
+   ```powershell
+   cd C:\KATAV
+   ```
+
+5. To be sure you really are an administrator, the window title contains **Administrator**, or run:
+
+   ```powershell
+   ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+   ```
+
+   `True` means the window is elevated.
+
+### Do you actually need Administrator rights?
+
+| Situation | Administrator needed? |
+| --- | --- |
+| Normal install into `C:\KATAV` or `C:\Users\<your name>\KATAV` | **No** |
+| Creating `.venv`, running `pip install`, running `python main.py` | **No** |
+| Transcribing files, translating, using the browser interface | **No** |
+| Project placed inside `C:\Program Files` or in the root of the system drive | Yes (better: move the project to `C:\KATAV`) |
+| `Access is denied` while creating `.venv` or writing to `Outputs` | Yes, once - or move the project to a normal user folder |
+| Installing Python **for all users**, or changing a **system-wide** environment variable | Yes |
+| Allowing a port through the firewall (only if you expose the app to your LAN) | Yes |
+
+> **Do not run KATAV as administrator every day.** Files created by an elevated process can later be hard to delete or overwrite from a normal window. If you already created `.venv` as administrator and now hit permission errors, delete the `.venv` folder and repeat Step 5 in a normal (non-elevated) terminal.
+
 ---
 
 ## Step 5 - Install KATAV dependencies
@@ -177,6 +233,8 @@ Shortcut: in `C:\KATAV` you can also double-click **`start.bat`**, which perform
 | Transcription is very slow | No NVIDIA GPU, so it runs on the CPU | Normal behaviour: choose a smaller model, or use a machine with a GPU |
 | Browser shows nothing | The page did not open automatically | Copy the `http://127.0.0.1:...` address from the terminal into the browser manually |
 | Russian/Hebrew text looks like garbage | Editor does not read UTF-8 | Open the file with VS Code, Word, or Notepad++ instead of old Notepad |
+| `Access is denied` when creating `.venv` or writing files | The folder is protected (for example inside `Program Files`) | Move the project to `C:\KATAV`, or open the terminal as Administrator (see Step 4) |
+| `.venv\Scripts\activate.bat is not recognized` in PowerShell | Wrong activation command for this terminal | In PowerShell use `.venv\Scripts\Activate.ps1`; `activate.bat` is only for `cmd` |
 
 ---
 

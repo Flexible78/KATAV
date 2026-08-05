@@ -37,7 +37,7 @@ KATAV is a local-first Windows toolkit for speech recognition. Audio and video t
 
 ## Quick start
 
-> **Never used Python or a terminal before?** Do not start with the commands below - follow the step-by-step beginner guide instead: **[docs/INSTALL_WINDOWS.md](docs/INSTALL_WINDOWS.md)** (Russian: **[docs/INSTALL_WINDOWS_RU.md](docs/INSTALL_WINDOWS_RU.md)**). It covers installing Python, downloading Faster-Whisper-XXL, and the most common error messages.
+> **Never used Python or a terminal before?** Do not start with the commands below - follow the step-by-step beginner guide instead: **[English](docs/INSTALL_WINDOWS.md)** · **[Русский](docs/INSTALL_WINDOWS_RU.md)** · **[עברית](docs/INSTALL_WINDOWS_HE.md)**. It covers installing Python, downloading Faster-Whisper-XXL, when Administrator rights are (and are not) needed, and the most common error messages.
 
 ```bash
 git clone https://github.com/Flexible78/KATAV.git
