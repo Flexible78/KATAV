@@ -239,7 +239,7 @@ def kill_program():
     # 3. Fallback: find processes listening on ports 8080 and 7861,
     #    walking up from the python child to its cmd.exe parent.
     if os.name == 'nt':
-        if not pids_to_kill:
+        if True:  # always scan ports - the PID file can be stale
             for port in (8080, 7861):
                 try:
                     result = _subprocess.run(
@@ -290,6 +290,30 @@ def kill_program():
                 by_title = True
             except Exception:
                 pass
+
+    # 4b. KATAV_PID_VALIDATION: never kill a PID that is gone or foreign.
+    if os.name == "nt" and pids_to_kill:
+        base_dir = os.path.dirname(os.path.abspath(__file__)).lower()
+        validated = []
+        for pid in pids_to_kill:
+            try:
+                res = _subprocess.run(
+                    ["powershell", "-NoProfile", "-Command",
+                     f"(Get-CimInstance Win32_Process -Filter \"ProcessId={pid}\").CommandLine"],
+                    capture_output=True, text=True, timeout=5,
+                    creationflags=0x08000000,
+                )
+                cmdline = res.stdout.strip()
+            except Exception:
+                cmdline = ""
+            if not cmdline:
+                logging.info(f"[EXIT] skip PID {pid}: process not found")
+                continue
+            if base_dir in cmdline.lower():
+                validated.append(pid)
+            else:
+                logging.warning(f"[EXIT] skip PID {pid}: foreign process ({cmdline[:100]})")
+        pids_to_kill = validated
 
     # 5. Kill recorded/fallback PIDs.
     if os.name == 'nt':

@@ -411,9 +411,10 @@ def process_logs(current_log: str):
     sd = batch_queue.get_shutdown_status()
     shutdown_html = ""
     if sd["scheduled"]:
-        shutdown_html = '<div style="margin-top:8px;padding:8px;background:rgba(234,88,12,0.1);border:1px solid #ea580c;border-radius:6px;text-align:center;"><span style="color:#f97316;font-weight:700;">⏱ Batch complete. Windows will shut down in 60 seconds.</span></div>'
+        _sd_msg = sd.get("message") or "Batch complete. Windows will shut down in 60 seconds."
+        shutdown_html = '<div style="margin-top:8px;padding:8px;background:rgba(138,115,80,0.12);border:1px solid #7d6a4c;border-radius:6px;text-align:center;"><span style="color:#c2ab86;font-weight:600;">⏱ ' + _sd_msg + '</span></div>'
     elif sd["cancelled"]:
-        shutdown_html = '<div style="margin-top:8px;padding:8px;background:rgba(16,185,129,0.1);border:1px solid #10b981;border-radius:6px;text-align:center;"><span style="color:#10b981;">Shutdown cancelled.</span></div>'
+        shutdown_html = '<div style="margin-top:8px;padding:8px;background:rgba(111,156,141,0.12);border:1px solid #5f8a7c;border-radius:6px;text-align:center;"><span style="color:#9dc4b6;">Shutdown cancelled.</span></div>'
 
     # ── Metrics panel (K2: honest ETA, TOTAL AUDIO label, single-file layout) ──
     batch_total_dur = batch_queue.get_total_media_seconds()
@@ -601,7 +602,7 @@ def build_app():
                         add_url_btn = gr.Button("+ URL", variant="secondary", elem_classes=["service-btn"], scale=1, min_width=40)
                         add_playlist_btn = gr.Button("+ PLAYLIST", variant="secondary", elem_classes=["service-btn"], scale=1, min_width=40)
                         paste_url_btn = gr.Button("PASTE", variant="secondary", elem_classes=["service-btn"], scale=1, min_width=40)
-                        clear_media_btn = gr.Button("CLEAR", variant="secondary", elem_classes=["service-btn"], scale=1, min_width=40)
+                        clear_media_btn = gr.Button("CLEAR", variant="secondary", elem_id="clear_media_btn", elem_classes=["service-btn","btn-clear"], scale=1, min_width=40)
                     
                     with gr.Row(elem_classes=["uniform-row"]):
                         manual_path = gr.Textbox(
@@ -681,9 +682,24 @@ def build_app():
                     with gr.Column(elem_classes=["translate-box"]):
                         
                         api_provider_val = ui_state.get("trans_provider", "Local Proxy (127.0.0.1)")
+                        from config import custom_provider_names as _custom_names, get_custom_provider as _get_custom
+                        _BASE_PROVIDERS = ["Local Proxy (127.0.0.1)", "OmniRoute", "Freeway", "Mistral", "Google Studio (Gemma 4)", "Groq (OSS 120b)", "OpenRouter"]
+                        _provider_choices = _BASE_PROVIDERS + _custom_names()
+                        if api_provider_val not in _provider_choices:
+                            api_provider_val = _BASE_PROVIDERS[0]
                         with gr.Row():
-                            api_provider = gr.Radio(choices=["Local Proxy (127.0.0.1)", "OmniRoute", "Freeway", "Mistral", "Google Studio (Gemma 4)", "Groq (OSS 120b)", "OpenRouter"], value=api_provider_val, label="PROVIDER")
+                            api_provider = gr.Radio(choices=_provider_choices, value=api_provider_val, label="PROVIDER")
                             translate_mode = gr.Radio(choices=["Files", "Text (from Editor)"], value="Files", label="MODE")
+                        with gr.Accordion("CUSTOM AI PROVIDER (OpenAI-compatible)", open=True):
+                            gr.Markdown("Register any OpenAI-compatible endpoint (LM Studio, Ollama, vLLM, LiteLLM, corporate gateway). After saving it appears in the PROVIDER list above.")
+                            with gr.Row(elem_classes=["uniform-row", "katav-inline-row"], equal_height=True):
+                                custom_name = gr.Textbox(label="NAME", placeholder="My LLM server", scale=3)
+                                custom_base_url = gr.Textbox(label="BASE URL", placeholder="http://127.0.0.1:1234/v1", scale=5)
+                                custom_key = gr.Textbox(label="API KEY (optional)", type="password", scale=3)
+                            with gr.Row(elem_classes=["uniform-row", "katav-inline-row"], equal_height=True):
+                                custom_add_btn = gr.Button("ADD / UPDATE PROVIDER", variant="primary", elem_classes=["fixed-height-btn", "btn-save"], scale=3)
+                                custom_delete_btn = gr.Button("DELETE PROVIDER", variant="stop", elem_classes=["fixed-height-btn", "btn-danger"], scale=2)
+                            custom_status = gr.Markdown("Saved custom providers: " + (", ".join(_custom_names()) or "none"))
                             
                         target_languages = gr.CheckboxGroup(choices=TARGET_LANGUAGES, value=ui_state.get("trans_langs", TARGET_LANGUAGE_DEFAULTS), label="TARGET LANGUAGES")
                         force_all_langs = gr.Checkbox(label="TRANSLATE ANYWAY", value=False)
@@ -696,10 +712,11 @@ def build_app():
                         elif api_provider_val == "OmniRoute": init_key = saved_keys.get("omniroute", "")
                         elif api_provider_val == "Freeway": init_key = saved_keys.get("freeway", "") or "123"
                         elif api_provider_val == "Mistral": init_key = saved_keys.get("mistral", "")
+                        elif _get_custom(api_provider_val): init_key = (_get_custom(api_provider_val) or {}).get("api_key", "")
                         else: init_key = "dummy" if api_provider_val == "Local Proxy (127.0.0.1)" else ""
                         
                         api_key_input = gr.Textbox(label=f"API KEY ({api_provider_val})", value=init_key, type="password")
-                        save_key_btn = gr.Button("SAVE KEY", variant="secondary", elem_classes=["fixed-height-btn"], min_width=40)
+                        save_key_btn = gr.Button("SAVE KEY", variant="primary", elem_classes=["fixed-height-btn","btn-save"], min_width=40)
                         
                         if api_provider_val == "OpenRouter": init_choices = get_model_choices(OPENROUTER_MODELS)
                         elif api_provider_val == "Groq (OSS 120b)": init_choices = GROQ_MODELS
@@ -707,6 +724,7 @@ def build_app():
                         elif api_provider_val == "OmniRoute": init_choices = get_model_choices(OMNIROUTE_MODELS)
                         elif api_provider_val == "Freeway": init_choices = get_model_choices(FREEWAY_MODELS)
                         elif api_provider_val == "Mistral": init_choices = get_model_choices(MISTRAL_MODELS)
+                        elif _get_custom(api_provider_val): init_choices = get_model_choices((_get_custom(api_provider_val) or {}).get("models", []))
                         else: init_choices = get_model_choices(LOCAL_PROXY_MODELS)
                         
                         with gr.Row(elem_classes=["uniform-row"]):
@@ -721,19 +739,19 @@ def build_app():
                                 srt_local_path = gr.Textbox(label="AUTOFILL FILE PATH", value=ui_state.get("trans_srt_path", ""), placeholder="D:\\Video\\docs", scale=5, lines=2)
                                 with gr.Column(scale=4, min_width=320):
                                     with gr.Row(elem_classes=["uniform-row"]):
-                                        clear_trans_files_btn = gr.Button("CLEAR", variant="secondary", elem_classes=["fixed-height-btn"], min_width=40)
+                                        clear_trans_files_btn = gr.Button("CLEAR", variant="secondary", elem_id="clear_trans_files_btn", elem_classes=["fixed-height-btn","btn-clear"], min_width=40)
                                         srt_paste_btn = gr.Button("PASTE", variant="secondary", elem_classes=["fixed-height-btn"], min_width=40)
                                         srt_file_btn = gr.Button("FILE", variant="secondary", elem_classes=["fixed-height-btn"], min_width=40)
                                         srt_folder_btn = gr.Button("DIR", variant="secondary", elem_classes=["fixed-height-btn"], min_width=40)
                                     with gr.Row(elem_classes=["uniform-row"]):
-                                        copy_srt_btn = gr.Button("COPY SRT", variant="primary", elem_classes=["fixed-height-btn"])
-                                        save_srt_btn = gr.Button("SAVE SRT AS...", variant="primary", elem_classes=["fixed-height-btn"])
+                                        copy_srt_btn = gr.Button("COPY SRT", variant="primary", elem_classes=["fixed-height-btn","btn-save"])
+                                        save_srt_btn = gr.Button("SAVE SRT AS...", variant="primary", elem_classes=["fixed-height-btn","btn-save"])
                             
                         custom_srt = gr.File(label="Drop files here", file_types=[".srt", ".txt", ".csv", ".json", ".pdf", ".md"], file_count="multiple")
                         
                         with gr.Row():
-                            translate_btn = gr.Button("TRANSLATE", variant="secondary", elem_classes=["fixed-height-btn"])
-                            export_json_btn = gr.Button("EXTRACT VOCAB", variant="secondary", elem_classes=["fixed-height-btn"])
+                            translate_btn = gr.Button("TRANSLATE", variant="primary", elem_classes=["fixed-height-btn","btn-primary"])
+                            export_json_btn = gr.Button("EXTRACT VOCAB", variant="primary", elem_classes=["fixed-height-btn","btn-primary"])
                             
                         export_json_status = gr.Textbox(label="VOCAB STATUS", lines=2, interactive=False)
 
@@ -745,23 +763,25 @@ def build_app():
 
                 with gr.Row(elem_classes=["uniform-row"]):
                     skip_done_checkbox = gr.Checkbox(label="SKIP DONE", value=True)
-                    retry_failed_btn = gr.Button("RETRY FAILED", variant="secondary", elem_classes=["fixed-height-btn"], min_width=40)
+                    retry_failed_btn = gr.Button("RETRY FAILED", variant="secondary", elem_classes=["fixed-height-btn","btn-warning"], min_width=40)
                 
                 with gr.Row(elem_classes=["uniform-row"]):
                     start_btn = gr.Button("START", variant="secondary", elem_id="start_btn", elem_classes=["fixed-height-btn"])
                     start_full_btn = gr.Button("FULL CYCLE", variant="secondary", elem_id="start_full_btn", elem_classes=["fixed-height-btn"])
-                    pause_btn = gr.Button("PAUSE", variant="secondary", elem_classes=["fixed-height-btn"])
+                    pause_btn = gr.Button("PAUSE", variant="secondary", elem_classes=["fixed-height-btn","btn-warning"])
                     stop_btn = gr.Button("STOP", variant="stop", elem_id="stop_btn", elem_classes=["fixed-height-btn"])
                     restart_btn = gr.Button("RELOAD", variant="secondary", elem_classes=["fixed-height-btn"], min_width=40)
                     exit_btn = gr.Button("EXIT", variant="stop", elem_id="exit_btn", elem_classes=["fixed-height-btn"], min_width=40)
                 
-                with gr.Row(elem_classes=["uniform-row"]):
-                    open_output_btn = gr.Button("OPEN OUTPUT FOLDER", variant="secondary", elem_classes=["fixed-height-btn"])
-                    output_size_label = gr.Textbox(label="", value="", interactive=False, show_label=False, scale=10)
+                with gr.Row(elem_classes=["uniform-row", "katav-inline-row"], equal_height=True):
+                    open_output_btn = gr.Button("OPEN OUTPUT FOLDER", variant="secondary", elem_classes=["fixed-height-btn"], scale=4)
+                    auto_open_output = gr.Checkbox(label="AUTO-OPEN WHEN DONE", value=True, elem_id="auto_open_cb", elem_classes=["katav-switch"], container=False, scale=4)
+                    output_size_label = gr.Textbox(label="", value="", interactive=False, show_label=False, container=False, elem_id="output_size_box", scale=4)
 
-                with gr.Row():
-                    shutdown_checkbox = gr.Checkbox(label="Shut down Windows after batch completes", value=False, elem_id="shutdown_cb")
-                    cancel_shutdown_btn = gr.Button("CANCEL SHUTDOWN", variant="stop", elem_classes=["fixed-height-btn"], visible=False, min_width=40)
+                with gr.Row(elem_classes=["uniform-row", "katav-inline-row"], equal_height=True):
+                    shutdown_checkbox = gr.Checkbox(label="POWER ACTION AFTER BATCH", value=False, elem_id="shutdown_cb", elem_classes=["katav-switch"], container=False, scale=4)
+                    power_mode = gr.Radio(choices=["SHUT DOWN", "SLEEP"], value="SHUT DOWN", show_label=False, container=False, elem_id="power_mode", elem_classes=["katav-segmented"], scale=4)
+                    cancel_shutdown_btn = gr.Button("CANCEL", variant="stop", elem_classes=["fixed-height-btn", "btn-danger"], visible=False, min_width=40, scale=4)
                 
                 with gr.Accordion("🗑 CLEAN OUTPUT DIRECTORY", open=False):
                     with gr.Row(elem_classes=["file-manager"]):
@@ -769,8 +789,8 @@ def build_app():
                             files_to_delete = gr.CheckboxGroup(choices=[], label="SELECT FILES TO DELETE")
                         with gr.Column(scale=1):
                             refresh_files_btn = gr.Button("SHOW", size="sm", elem_classes=["fixed-height-btn"])
-                            del_selected_btn = gr.Button("DELETE", size="sm", variant="secondary", elem_classes=["fixed-height-btn"])
-                            del_all_btn = gr.Button("ALL", size="sm", variant="stop", elem_classes=["fixed-height-btn"])
+                            del_selected_btn = gr.Button("DELETE", size="sm", variant="stop", elem_classes=["fixed-height-btn","btn-danger"])
+                            del_all_btn = gr.Button("ALL", size="sm", variant="stop", elem_classes=["fixed-height-btn","btn-danger-strong"])
                             del_status = gr.Markdown("")
                 
             # ==================== ПРАВАЯ КОЛОНКА ====================
@@ -791,7 +811,7 @@ def build_app():
                             label="FORMAT", 
                             scale=1
                         )
-                        save_text_btn = gr.Button("SAVE TEXT", variant="secondary", elem_classes=["fixed-height-btn"], scale=4)
+                        save_text_btn = gr.Button("SAVE TEXT", variant="primary", elem_classes=["fixed-height-btn","btn-save"], scale=4)
                     
                     save_status = gr.Markdown("")
                     
@@ -874,6 +894,12 @@ def build_app():
                 saved_model = last_models.get("Mistral", mistral_choices[0] if mistral_choices else "")
                 return gr.update(label="API Key (Mistral)", value=keys.get("mistral", "")), gr.update(choices=mistral_choices, value=saved_model), gr.update(value=DEFAULT_SYSTEM_PROMPT)
             else:
+                from config import get_custom_provider as _gcp
+                _cfg = _gcp(provider)
+                if _cfg:
+                    _models = get_model_choices(_cfg.get("models", []))
+                    _saved = last_models.get(provider, _models[0] if _models else "")
+                    return gr.update(label="API Key (" + str(provider) + ")", value=_cfg.get("api_key", "")), gr.update(choices=_models, value=_saved), gr.update(value=DEFAULT_SYSTEM_PROMPT)
                 return gr.update(label="API Key", value=keys.get("google", "")), gr.update(choices=[], value=""), gr.update(value=DEFAULT_SYSTEM_PROMPT)
 
         api_provider.change(fn=update_ui_for_provider, inputs=[api_provider], outputs=[api_key_input, api_model, sys_prompt])
@@ -894,6 +920,11 @@ def build_app():
                     "Freeway": "freeway",
                     "Mistral": "mistral",
                 }
+                from config import get_custom_provider as _gcp2, save_custom_provider as _scp2
+                _ccfg = _gcp2(provider)
+                if _ccfg:
+                    _scp2(provider, _ccfg.get("base_url", ""), api_key_val, _ccfg.get("models", []))
+                    return "Key for " + str(provider) + " saved."
                 pk = provider_key_map.get(provider, "google")
                 keys[pk] = api_key_val
                 with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
@@ -908,6 +939,41 @@ def build_app():
             inputs=[api_provider, api_key_input],
             outputs=[translate_status]
         )
+
+        def on_add_custom_provider(name, base_url, key):
+            from config import save_custom_provider as _scp, custom_provider_names as _cpn
+            label = str(name or "").strip()
+            try:
+                cfg = _scp(label, base_url, key or "")
+            except Exception as e:
+                gr.Warning(str(e))
+                return gr.update(), "Error: " + str(e)
+            models = []
+            try:
+                models = fetch_models(label, key or cfg.get("api_key", ""))
+                if models:
+                    _scp(label, cfg.get("base_url", ""), key or cfg.get("api_key", ""), models)
+            except Exception:
+                models = []
+            choices = _BASE_PROVIDERS + _cpn()
+            gr.Info("Provider saved: " + label)
+            note = "Saved **" + label + "** -> " + cfg.get("base_url", "")
+            note += " (" + str(len(models)) + " models loaded)" if models else " (models not loaded - use the refresh button)"
+            return gr.update(choices=choices, value=label), note
+
+        def on_delete_custom_provider(name):
+            from config import delete_custom_provider as _dcp, custom_provider_names as _cpn
+            label = str(name or "").strip()
+            ok = _dcp(label)
+            choices = _BASE_PROVIDERS + _cpn()
+            if not ok:
+                gr.Warning("Provider not found: " + label)
+                return gr.update(choices=choices), "Not found: " + label
+            gr.Info("Provider deleted: " + label)
+            return gr.update(choices=choices, value=choices[0]), "Deleted: " + label
+
+        custom_add_btn.click(fn=on_add_custom_provider, inputs=[custom_name, custom_base_url, custom_key], outputs=[api_provider, custom_status])
+        custom_delete_btn.click(fn=on_delete_custom_provider, inputs=[custom_name], outputs=[api_provider, custom_status])
 
         def on_refresh_models(provider: str, api_key_val: str):
             """Fetch models from provider, cache them, and update dropdown."""
@@ -934,6 +1000,13 @@ def build_app():
                 keys["cached_models"] = cached
                 with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
                     json.dump(keys, f, indent=4)
+            except Exception:
+                pass
+            try:
+                from config import get_custom_provider as _gcp3, save_custom_provider as _scp3
+                _ccfg3 = _gcp3(provider)
+                if _ccfg3:
+                    _scp3(provider, _ccfg3.get("base_url", ""), api_key_val or _ccfg3.get("api_key", ""), models)
             except Exception:
                 pass
             return gr.update(choices=models, value=models[0] if models else None)
@@ -1015,10 +1088,32 @@ def build_app():
             outputs=[translate_status]
         )
 
+        def maybe_auto_open(enabled, manual_path_val, use_custom, custom_dir, actual_dir):
+            """Open the results folder right after a run finishes (if enabled)."""
+            if not enabled:
+                return
+            target = actual_dir if actual_dir and os.path.isdir(actual_dir) else ""
+            if not target:
+                from utils import get_actual_output_dir
+                target = get_actual_output_dir(manual_path_val, use_custom, custom_dir)
+            if target and os.path.isdir(target):
+                try:
+                    import subprocess as _sp
+                    _sp.Popen(["explorer", target], shell=True)
+                    gr.Info("Output folder opened: " + target)
+                except Exception as _e:
+                    gr.Warning("Could not open output folder: " + str(_e))
+
+
+
         start_btn.click(fn=prepare_start, inputs=all_settings_inputs, outputs=log_box).then(
             fn=run_transcription,
             inputs=whisper_inputs,
             outputs=[clean_text_output, hidden_dl_files, log_box, hidden_srt_paths, srt_local_path, hidden_actual_out_dir] 
+        ).then(
+            fn=maybe_auto_open,
+            inputs=[auto_open_output, manual_path, use_custom_output, output_folder, hidden_actual_out_dir],
+            queue=False,
         )
 
         start_full_btn.click(fn=prepare_start, inputs=all_settings_inputs, outputs=log_box).then(
@@ -1036,6 +1131,10 @@ def build_app():
                 language, plain_text_output
             ], 
             outputs=[translate_status, clean_text_output, hidden_srt_paths]
+        ).then(
+            fn=maybe_auto_open,
+            inputs=[auto_open_output, manual_path, use_custom_output, output_folder, hidden_actual_out_dir],
+            queue=False,
         )
         
         translate_btn.click(fn=prepare_start, inputs=all_settings_inputs, outputs=log_box).then(
@@ -1047,6 +1146,10 @@ def build_app():
                 language, plain_text_output
             ], 
             outputs=[translate_status, clean_text_output, hidden_srt_paths]
+        ).then(
+            fn=maybe_auto_open,
+            inputs=[auto_open_output, manual_path, use_custom_output, output_folder, hidden_actual_out_dir],
+            queue=False,
         )
 
         export_json_btn.click(
@@ -1112,19 +1215,30 @@ def build_app():
         exit_btn.click(fn=kill_program, js=_EXIT_JS, queue=False)
 
         # ── Shutdown controls (E2) ──
-        def on_shutdown_toggle(checked: bool):
+        def _power_key(mode) -> str:
+            return "sleep" if str(mode or "").strip().upper().startswith("SLEEP") else "shutdown"
+
+        def on_shutdown_toggle(checked: bool, mode: str):
+            batch_queue.set_power_action(_power_key(mode))
             if checked:
                 batch_queue.enable_shutdown()
+                gr.Info("Windows will sleep 60s after the batch." if _power_key(mode) == "sleep" else "Windows will shut down 60s after the batch.")
             else:
                 batch_queue.disable_shutdown()
             return gr.update(visible=checked)
+
+        def on_power_mode_change(mode: str, checked: bool):
+            batch_queue.set_power_action(_power_key(mode))
+            if checked:
+                gr.Info("Sleep mode selected." if _power_key(mode) == "sleep" else "Shutdown mode selected.")
 
         def on_cancel_shutdown():
             msg = batch_queue.cancel_shutdown()
             gr.Info(msg)
             return gr.update(value=False), gr.update(visible=False)
 
-        shutdown_checkbox.change(fn=on_shutdown_toggle, inputs=[shutdown_checkbox], outputs=[cancel_shutdown_btn])
+        shutdown_checkbox.change(fn=on_shutdown_toggle, inputs=[shutdown_checkbox, power_mode], outputs=[cancel_shutdown_btn])
+        power_mode.change(fn=on_power_mode_change, inputs=[power_mode, shutdown_checkbox])
         cancel_shutdown_btn.click(fn=on_cancel_shutdown, outputs=[shutdown_checkbox, cancel_shutdown_btn])
 
         def on_join_click(manual_path_val, use_custom, custom_dir, plain_text):

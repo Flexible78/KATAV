@@ -1032,3 +1032,48 @@ Progon 4: new study-deck module for language learning, queue quality-of-life fea
 | D6 | Theme toggle (light/dark) removed; CSS variables remain for reimplementation | BD13 | Low — cosmetic feature |
 
 Nothing was pushed.
+
+## Snapshot 2026-08-06 - Stability and UX batch
+
+### Summary
+Improved startup/exit reliability and delivered output auto-open, selectable post-batch sleep,
+a pastel production palette, user-defined OpenAI-compatible providers, and a CLEAR button
+that uses the exact START palette.
+
+### What changed
+- `main.py`: `_check_port()` now checks LISTEN sockets, tolerates vanished owners, identifies
+  KATAV processes case-insensitively, waits after targeted termination, and rejects foreign
+  Python owners; `_register_pids()` records the runtime process and parent in `.katav_pids`.
+- `utils.py`: `kill_program()` always rescans runtime ports and validates every PID belongs to
+  the KATAV directory before terminating it.
+- `gradio_app.py`: added `AUTO-OPEN WHEN DONE`, `SHUT DOWN / SLEEP`, cancellable power action,
+  live status messages, and a custom OpenAI-compatible provider editor with model refresh.
+- `queue_manager.py`: added a selectable power action and a cancellable 60-second sleep timer.
+- `config.py`: added the `custom_providers.json` registry helpers and final UI palette layers.
+- `ai_translator.py`: custom providers now work in connection checks, model discovery, key
+  persistence, and OpenAI-compatible API requests.
+- `README.md`: documented output auto-open, power actions, custom providers, UI, and stability.
+- CLEAR styling: both CLEAR controls use `variant="secondary"`, dedicated IDs
+  (`#clear_media_btn`, `#clear_trans_files_btn`), and the same final CSS selectors, gradient,
+  border, text, hover, active, focus, and light-theme palette as START. Generic PASTE/service
+  button rules cannot override the ID-specific v5 palette.
+
+### Files in the release commit
+`README.md`, `agent.md`, `ai_translator.py`, `config.py`, `gradio_app.py`, `main.py`,
+`queue_manager.py`, `utils.py`.
+
+### Local artifacts excluded from the commit
+`custom_providers.json`, one-off patch/fix scripts, `*.bak_*` snapshots, and local notes remain
+untracked and are not part of the release commit.
+
+### Verification
+- `config.py` and `gradio_app.py` compile successfully.
+- KATAV was restarted after the final CSS/element-ID change and returned HTTP 200 on port 7861.
+- `git diff --check` is clean.
+
+### Not verified / open
+- Manual EXIT round trip, visual confirmation after the final browser refresh, and a real
+  post-batch SLEEP were not exercised end to end.
+- Legacy bright CSS rules remain in `config.py`, but the final v5 ID-specific palette overrides them.
+- `.katav_pids` may retain stale entries; PID validation prevents foreign-process termination.
+- Migration from deprecated `google.generativeai` to `google.genai` remains separate tech debt.

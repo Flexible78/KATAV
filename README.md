@@ -125,3 +125,29 @@ Windows 11, Python 3.14, clean virtual environment, fresh clone.
 ## License
 
 All rights reserved. See [LICENSE](LICENSE).
+
+## What is new (2026-08-06)
+
+### Output handling
+- `AUTO-OPEN WHEN DONE` checkbox (on by default) next to `OPEN OUTPUT FOLDER`: the results folder opens in Explorer as soon as transcription, translation or a full cycle finishes.
+- `RETRY FAILED` requeues every item with the `failed` status; `RELOAD` restarts the whole app process and reloads the browser tab.
+
+### Power actions after a batch
+- `POWER ACTION AFTER BATCH` replaces the old shutdown checkbox and now has a `SHUT DOWN / SLEEP` selector plus `CANCEL`.
+- `SHUT DOWN` runs `shutdown /s /t 60` (cancellable with `shutdown /a`).
+- `SLEEP` waits 60 cancellable seconds and then calls `rundll32.exe powrprof.dll,SetSuspendState 0,1,0`. For real S3 sleep instead of hibernation run `powercfg /h off` once.
+
+### Custom AI providers
+- `TRANSLATION -> CUSTOM AI PROVIDER (OpenAI-compatible)` registers any OpenAI-compatible endpoint: LM Studio, Ollama OpenAI shim, vLLM, LiteLLM, corporate gateways.
+- Fields: `NAME`, `BASE URL` (for example `http://127.0.0.1:1234/v1`), optional `API KEY`.
+- `ADD / UPDATE PROVIDER` saves it to `custom_providers.json`, adds it to the `PROVIDER` radio immediately and tries to pull the model list.
+- `DELETE PROVIDER` removes it. Custom providers work with `CHECK API`, model refresh, `SAVE KEY` and translation exactly like the built-in ones.
+
+### UI
+- Pastel production palette: one steel-blue accent plus muted sand, brick, teal and rose, no neon.
+- `CLEAR` buttons are intentionally highlighted (rose border and ring) because the action is destructive.
+- Checkboxes and the power selector are real 48 px controls aligned with the buttons, with modern thin scrollbars.
+
+### Stability
+- `main.py` port guard: only LISTEN sockets are probed, stale PIDs are ignored, only KATAV python processes are terminated, foreign owners are reported instead of crashing the launch.
+- `main.py` registers its real PIDs in `.katav_pids`; `utils.kill_program()` validates each PID before killing, so `EXIT` no longer kills unrelated apps or leaves port 7861 busy.

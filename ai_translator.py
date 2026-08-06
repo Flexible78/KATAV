@@ -11,11 +11,34 @@ from config import (
     DEFAULT_OUTPUT_DIR, DEFAULT_SYSTEM_PROMPT, GEMMA_SYSTEM_PROMPT, CONFIG_FILE,
     OMNIROUTE_BASE_URL, FREEWAY_BASE_URL, FREEWAY_DEFAULT_KEY, MISTRAL_BASE_URL,
     TARGET_LANGUAGES, TARGET_LANGUAGE_MARKERS, TARGET_LANGUAGE_CODE_MAP,
+    get_custom_provider, save_custom_provider,
 )
 from ui_manager import ui_state
 from srt_processor import chunk_text, sanitize_srt_text
 from queue_manager import batch_queue
 import json
+
+
+def _custom_cfg(provider):
+    """Config of a user-defined OpenAI-compatible provider, or None."""
+    try:
+        return get_custom_provider(provider)
+    except Exception:
+        return None
+
+
+def _openai_endpoint(provider, api_key=""):
+    """Resolve (base_url, api_key) for OpenAI-compatible providers, custom included."""
+    cfg = _custom_cfg(provider)
+    if cfg:
+        return cfg.get("base_url", ""), (api_key or cfg.get("api_key", "") or "not-needed")
+    if provider == "OmniRoute":
+        return OMNIROUTE_BASE_URL, api_key
+    if provider == "Freeway":
+        return FREEWAY_BASE_URL, (api_key or FREEWAY_DEFAULT_KEY)
+    if provider == "Mistral":
+        return MISTRAL_BASE_URL, api_key
+    return "", api_key
 
 
 # Normalized language detection map shared across helpers.
@@ -164,6 +187,11 @@ def translate_content(
         elif provider == "OmniRoute": keys["omniroute"] = current_api_key
         elif provider == "Freeway": keys["freeway"] = current_api_key or FREEWAY_DEFAULT_KEY
         elif provider == "Mistral": keys["mistral"] = current_api_key
+        elif _custom_cfg(provider):
+            try:
+                save_custom_provider(provider, (_custom_cfg(provider) or {}).get("base_url", ""), current_api_key)
+            except Exception:
+                pass
         else: keys["google"] = current_api_key
         
         with open(CONFIG_FILE, 'w', encoding='utf-8') as f: json.dump(keys, f, indent=4)
@@ -174,7 +202,7 @@ def translate_content(
     def live_log(msg: str):
         utils.log_to_terminal(msg); utils.log_queue.put(msg + "\n")
 
-    if not api_key and provider != "Local Proxy (127.0.0.1)":
+    if not api_key and provider != "Local Proxy (127.0.0.1)" and not _custom_cfg(provider):
         return "❌ Error: No API key specified!", "", ""
     if not model_name or not model_name.strip():
         return "❌ Error: No model selected! Click 🔄 to refresh models.", "", ""
@@ -258,9 +286,10 @@ def translate_content(
             groq_client = Groq(api_key=api_key)
             groq_client.chat.completions.create(model=model_name, messages=[{"role": "user", "content": "Ping"}], max_tokens=2)
             client = groq_client
-        elif provider == "OmniRoute":
+        elif provider == "OmniRoute" or _custom_cfg(provider):
             if not OPENAI_READY: raise ImportError("Module openai is not installed.")
-            client = OpenAI(base_url=OMNIROUTE_BASE_URL, api_key=api_key, max_retries=0)
+            _base, _key = _openai_endpoint(provider, api_key)
+            client = OpenAI(base_url=(_base or OMNIROUTE_BASE_URL), api_key=_key, max_retries=0)
             client.chat.completions.create(model=model_name, messages=[{"role": "user", "content": "Ping"}], max_tokens=2)
         elif provider == "Freeway":
             if not OPENAI_READY: raise ImportError("Module openai is not installed.")
@@ -619,7 +648,7 @@ def translate_content(
     return status_msg, all_clean_editor_text, "|".join(saved_files)
 
 def check_api(provider: str, current_api_key: str, model_name: str) -> str:
-    if not current_api_key and provider != "Local Proxy (127.0.0.1)":
+    if not current_api_key and provider != "Local Proxy (127.0.0.1)" and not _custom_cfg(provider):
         return "❌ Error: Enter an API key!"
     if not model_name or not model_name.strip():
         return "❌ Error: No model selected! Click 🔄 to refresh models or enter a model name manually."
@@ -683,6 +712,14 @@ def check_api(provider: str, current_api_key: str, model_name: str) -> str:
             _save_last_model(provider, model_name)
             return f"✅ Success! Connection to Freeway works."
 
+        elif _custom_cfg(provider):
+            if not OPENAI_READY: raise ImportError("Module openai is not installed.")
+            _base, _key = _openai_endpoint(provider, current_api_key)
+            client = OpenAI(base_url=_base, api_key=_key)
+            client.chat.completions.create(model=model_name, messages=[{"role": "user", "content": "Ping"}], max_tokens=2)
+            _save_last_model(provider, model_name)
+            return "Success! Connection to " + str(provider) + " works."
+
         elif provider == "Mistral":
             if not OPENAI_READY: raise ImportError("Module openai is not installed.")
             client = OpenAI(base_url=MISTRAL_BASE_URL, api_key=current_api_key)
@@ -699,7 +736,7 @@ def fetch_models(provider: str, api_key: str) -> list:
     Dynamically fetch available models from the selected provider.
     Returns a sorted list of model IDs (strings). On failure returns empty list.
     """
-    if not api_key and provider != "Local Proxy (127.0.0.1)":
+    if not api_key and provider != "Local Proxy (127.0.0.1)" and not _custom_cfg(provider):
         return []
 
     try:
@@ -756,6 +793,14 @@ def fetch_models(provider: str, api_key: str) -> list:
             if not OPENAI_READY:
                 return []
             client = OpenAI(base_url=FREEWAY_BASE_URL, api_key=(api_key or FREEWAY_DEFAULT_KEY))
+            models = [m.id for m in client.models.list().data]
+            return sorted(models)
+
+        elif _custom_cfg(provider):
+            if not OPENAI_READY:
+                return []
+            _base, _key = _openai_endpoint(provider, api_key)
+            client = OpenAI(base_url=_base, api_key=_key)
             models = [m.id for m in client.models.list().data]
             return sorted(models)
 

@@ -383,6 +383,108 @@ body.katav-light .gr-accordion {
 body.katav-light .gr-accordion > .label-wrap > span:first-child {
     color: #1e293b !important;
 }
+:root,body,.gradio-container{--katav-bg:#1f2937;--katav-panel:rgba(30,41,59,.92);--katav-text:#e2e8f0;--katav-muted:#94a3b8;--katav-accent:#3b82f6;--katav-border:#475569}
+body,.gradio-container{background-image:none !important}
+.service-btn,.fixed-height-btn{border:1px solid #64748b !important;background:linear-gradient(180deg,#64748b 0%,#475569 100%) !important;color:#f8fafc !important}
+.service-btn:hover,.fixed-height-btn:hover{background:linear-gradient(180deg,#94a3b8 0%,#64748b 100%) !important}
+body.katav-light .service-btn,body.katav-light .fixed-height-btn{background:linear-gradient(180deg,#e2e8f0 0%,#cbd5e1 100%) !important;color:#1e293b !important;border-color:#94a3b8 !important}
+.btn-primary,#start_btn,#start_full_btn{background:linear-gradient(180deg,#3b82f6 0%,#1d4ed8 100%) !important;border:1px solid #60a5fa !important;color:#fff !important}
+.btn-primary:hover,#start_btn:hover,#start_full_btn:hover{background:linear-gradient(180deg,#60a5fa 0%,#2563eb 100%) !important}
+.btn-save{background:linear-gradient(180deg,#0ea5e9 0%,#0369a1 100%) !important;border:1px solid #38bdf8 !important;color:#fff !important}
+.btn-warning{background:linear-gradient(180deg,#f59e0b 0%,#b45309 100%) !important;border:1px solid #fbbf24 !important;color:#1f2937 !important}
+.btn-danger,#stop_btn,#exit_btn{background:linear-gradient(180deg,#dc2626 0%,#991b1b 100%) !important;border:1px solid #ef4444 !important;color:#fff !important}
+.btn-danger:hover,#stop_btn:hover,#exit_btn:hover{background:linear-gradient(180deg,#ef4444 0%,#b91c1c 100%) !important}
+.btn-clear,.btn-danger-strong{background:linear-gradient(180deg,#f43f5e 0%,#9f1239 100%) !important;border:1px solid #fb7185 !important;color:#fff !important;font-weight:700 !important}
+.btn-clear:hover,.btn-danger-strong:hover{background:linear-gradient(180deg,#fb7185 0%,#be123c 100%) !important}
+.service-btn:focus-visible,.fixed-height-btn:focus-visible{outline:2px solid #93c5fd !important;outline-offset:2px !important}
+.service-btn[disabled],.fixed-height-btn[disabled]{opacity:.45 !important;filter:grayscale(.6) !important;cursor:not-allowed !important}
+.status-running{border:2px solid #3b82f6 !important;box-shadow:0 0 15px rgba(59,130,246,.5) !important}
+.katav-progress-fill{background:linear-gradient(90deg,#3b82f6,#60a5fa) !important}
+
+/* ===== KATAV v2 inline controls ===== */
+.katav-inline-row{display:flex !important;align-items:center !important;gap:10px !important;flex-wrap:wrap !important;overflow:visible !important;margin-bottom:8px !important}
+.katav-inline-row>*{overflow:visible !important;min-width:0 !important}
+.katav-inline-row .fixed-height-btn{margin:0 !important}
+.katav-switch{display:flex !important;align-items:center !important;min-height:48px !important;margin:0 !important;padding:0 14px !important;border:1px solid #475569 !important;border-radius:8px !important;background:linear-gradient(180deg,#334155 0%,#1e293b 100%) !important;box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 2px 4px rgba(0,0,0,.35) !important;transition:all .2s ease !important}
+.katav-switch:hover{border-color:#94a3b8 !important;background:linear-gradient(180deg,#3f4d63 0%,#26334a 100%) !important}
+.katav-switch label{display:flex !important;align-items:center !important;gap:10px !important;width:100% !important;margin:0 !important;padding:0 !important;border:0 !important;background:transparent !important;box-shadow:none !important;cursor:pointer !important}
+.katav-switch label>span{font-size:11px !important;font-weight:600 !important;letter-spacing:.5px !important;text-transform:uppercase !important;color:#e2e8f0 !important;line-height:1.15 !important;white-space:nowrap !important;overflow:hidden !important;text-overflow:ellipsis !important}
+.katav-switch input[type="checkbox"]{flex:0 0 18px !important;width:18px !important;height:18px !important;margin:0 !important;border-radius:5px !important;accent-color:#3b82f6 !important;cursor:pointer !important}
+body.katav-light .katav-switch{background:linear-gradient(180deg,#f1f5f9 0%,#e2e8f0 100%) !important;border-color:#cbd5e1 !important}
+body.katav-light .katav-switch label>span{color:#1e293b !important}
+.katav-segmented{min-height:48px !important;display:flex !important;align-items:center !important;margin:0 !important;padding:0 !important;border:0 !important;background:transparent !important;box-shadow:none !important;overflow:visible !important}
+.katav-segmented fieldset,.katav-segmented .wrap{display:flex !important;flex-direction:row !important;flex-wrap:nowrap !important;align-items:center !important;gap:8px !important;margin:0 !important;padding:0 !important;border:0 !important;background:transparent !important;overflow:visible !important}
+.katav-segmented label{display:flex !important;align-items:center !important;gap:8px !important;min-height:44px !important;padding:0 16px !important;border:1px solid #475569 !important;border-radius:8px !important;background:linear-gradient(180deg,#334155 0%,#1e293b 100%) !important;font-size:11px !important;font-weight:600 !important;letter-spacing:.5px !important;text-transform:uppercase !important;color:#e2e8f0 !important;white-space:nowrap !important;cursor:pointer !important;transition:all .2s ease !important}
+.katav-segmented label:hover{border-color:#93c5fd !important}
+.katav-segmented label:has(input:checked){border-color:#3b82f6 !important;background:linear-gradient(180deg,#3b82f6 0%,#1d4ed8 100%) !important;color:#f8fafc !important;box-shadow:0 2px 8px rgba(59,130,246,.35) !important}
+.katav-segmented input[type="radio"]{width:15px !important;height:15px !important;margin:0 !important;accent-color:#3b82f6 !important;cursor:pointer !important}
+body.katav-light .katav-segmented label{background:linear-gradient(180deg,#f1f5f9 0%,#e2e8f0 100%) !important;border-color:#cbd5e1 !important;color:#1e293b !important}
+#output_size_box{display:flex !important;align-items:center !important;min-height:48px !important}
+#output_size_box textarea,#output_size_box input{height:48px !important;min-height:48px !important;padding:0 14px !important;border:1px solid #475569 !important;border-radius:8px !important;background:rgba(15,23,42,.55) !important;color:#cbd5e1 !important;font-size:11px !important;letter-spacing:.5px !important;text-transform:uppercase !important;text-align:center !important;resize:none !important;overflow:hidden !important}
+body.katav-light #output_size_box textarea,body.katav-light #output_size_box input{background:#f8fafc !important;color:#334155 !important;border-color:#cbd5e1 !important}
+*{scrollbar-width:thin;scrollbar-color:rgba(100,116,139,.55) transparent}
+*::-webkit-scrollbar{width:10px;height:10px}
+*::-webkit-scrollbar-track{background:transparent}
+*::-webkit-scrollbar-thumb{background:rgba(100,116,139,.55);border-radius:999px;border:2px solid transparent;background-clip:content-box}
+*::-webkit-scrollbar-thumb:hover{background:rgba(148,163,184,.85);background-clip:content-box}
+*::-webkit-scrollbar-corner{background:transparent}
+.katav-inline-row *::-webkit-scrollbar{display:none !important}
+
+/* ===== KATAV v3 pastel production palette (single accent, low glare) ===== */
+:root{--katav-accent:#7d9dc4 !important;--katav-border:#3d4859 !important}
+.service-btn,.fixed-height-btn,button.lg,button.sm{background:linear-gradient(180deg,#2b3444 0%,#232b38 100%) !important;border:1px solid #3d4859 !important;color:#c3ccd9 !important;box-shadow:0 1px 2px rgba(0,0,0,.22) !important;text-shadow:none !important;font-weight:600 !important;letter-spacing:.4px !important}
+.service-btn:hover,.fixed-height-btn:hover{background:linear-gradient(180deg,#333d4e 0%,#29323f 100%) !important;border-color:#4c586b !important;color:#dbe3ec !important}
+.service-btn:active,.fixed-height-btn:active{transform:translateY(1px) !important;box-shadow:none !important}
+.btn-primary,#start_btn,#start_full_btn{background:linear-gradient(180deg,#48678c 0%,#3c5675 100%) !important;border:1px solid #587aa1 !important;color:#e9f0f7 !important}
+.btn-primary:hover,#start_btn:hover,#start_full_btn:hover{background:linear-gradient(180deg,#53749c 0%,#446184 100%) !important;border-color:#6b8cb2 !important}
+.btn-save{background:linear-gradient(180deg,#47786f 0%,#3a625b 100%) !important;border:1px solid #588e84 !important;color:#e7f1ee !important}
+.btn-save:hover{background:linear-gradient(180deg,#51867c 0%,#426e66 100%) !important}
+.btn-warning{background:linear-gradient(180deg,#7d6a4c 0%,#645540 100%) !important;border:1px solid #96805f !important;color:#f2ece0 !important}
+.btn-warning:hover{background:linear-gradient(180deg,#8b7757 0%,#6f5f48 100%) !important}
+.btn-danger,#stop_btn,#exit_btn{background:linear-gradient(180deg,#83514e 0%,#68403e 100%) !important;border:1px solid #9c6663 !important;color:#f5eae9 !important}
+.btn-danger:hover,#stop_btn:hover,#exit_btn:hover{background:linear-gradient(180deg,#915b58 0%,#754947 100%) !important}
+.btn-clear,.btn-danger-strong{background:linear-gradient(180deg,#7f4a55 0%,#653a44 100%) !important;border:1px solid #98606c !important;color:#f5e9ec !important}
+.btn-clear:hover,.btn-danger-strong:hover{background:linear-gradient(180deg,#8c535f 0%,#71424d 100%) !important}
+.service-btn:focus-visible,.fixed-height-btn:focus-visible{outline:2px solid #7d9dc4 !important;outline-offset:2px !important}
+.service-btn[disabled],.fixed-height-btn[disabled]{opacity:.4 !important;filter:grayscale(.7) !important;box-shadow:none !important}
+.katav-progress-fill{background:linear-gradient(90deg,#4d6a8f,#7d9dc4) !important}
+.katav-switch{background:linear-gradient(180deg,#2b3444 0%,#232b38 100%) !important;border-color:#3d4859 !important;box-shadow:0 1px 2px rgba(0,0,0,.22) !important}
+.katav-switch:hover{background:linear-gradient(180deg,#333d4e 0%,#29323f 100%) !important;border-color:#4c586b !important}
+.katav-switch label>span{color:#c3ccd9 !important}
+.katav-switch input[type="checkbox"]{accent-color:#7d9dc4 !important}
+.katav-segmented label{background:linear-gradient(180deg,#2b3444 0%,#232b38 100%) !important;border-color:#3d4859 !important;color:#c3ccd9 !important}
+.katav-segmented label:hover{border-color:#4c586b !important}
+.katav-segmented label:has(input:checked){background:linear-gradient(180deg,#48678c 0%,#3c5675 100%) !important;border-color:#587aa1 !important;color:#e9f0f7 !important;box-shadow:none !important}
+.katav-segmented input[type="radio"]{accent-color:#7d9dc4 !important}
+#output_size_box textarea,#output_size_box input{background:rgba(35,43,56,.7) !important;border-color:#3d4859 !important;color:#a9b6c7 !important}
+input[type="checkbox"],input[type="radio"]{accent-color:#7d9dc4 !important}
+body.katav-light .service-btn,body.katav-light .fixed-height-btn{background:linear-gradient(180deg,#f3f5f8 0%,#e6eaf0 100%) !important;border-color:#cfd7e2 !important;color:#41505f !important}
+body.katav-light .service-btn:hover,body.katav-light .fixed-height-btn:hover{background:linear-gradient(180deg,#e9edf3 0%,#dbe1ea 100%) !important;border-color:#b9c5d4 !important}
+body.katav-light .btn-primary,body.katav-light #start_btn,body.katav-light #start_full_btn{background:linear-gradient(180deg,#ccd9e9 0%,#b6c8de 100%) !important;border-color:#9db3cf !important;color:#26374a !important}
+body.katav-light .btn-save{background:linear-gradient(180deg,#cbe0da 0%,#b1cdc5 100%) !important;border-color:#94b8ae !important;color:#22403a !important}
+body.katav-light .btn-warning{background:linear-gradient(180deg,#eae0cb 0%,#dbcbab 100%) !important;border-color:#c4ae8b !important;color:#493d28 !important}
+body.katav-light .btn-danger,body.katav-light #stop_btn,body.katav-light #exit_btn{background:linear-gradient(180deg,#eed2d0 0%,#dcb9b6 100%) !important;border-color:#c69d9a !important;color:#4a2f2d !important}
+body.katav-light .btn-clear,body.katav-light .btn-danger-strong{background:linear-gradient(180deg,#eccdd3 0%,#d9aeb7 100%) !important;border-color:#c3939d !important;color:#4a2b33 !important}
+body.katav-light .katav-switch{background:linear-gradient(180deg,#f3f5f8 0%,#e6eaf0 100%) !important;border-color:#cfd7e2 !important}
+body.katav-light .katav-switch label>span{color:#41505f !important}
+body.katav-light .katav-segmented label{background:linear-gradient(180deg,#f3f5f8 0%,#e6eaf0 100%) !important;border-color:#cfd7e2 !important;color:#41505f !important}
+body.katav-light .katav-segmented label:has(input:checked){background:linear-gradient(180deg,#ccd9e9 0%,#b6c8de 100%) !important;border-color:#9db3cf !important;color:#26374a !important}
+body.katav-light #output_size_box textarea,body.katav-light #output_size_box input{background:#f7f9fb !important;border-color:#cfd7e2 !important;color:#4b5a6b !important}
+
+/* ===== KATAV v4: CLEAR emphasis (destructive action) ===== */
+.btn-clear,.btn-danger-strong{background:linear-gradient(180deg,#93555f 0%,#75414c 100%) !important;border:1px solid #c98c98 !important;color:#fdf2f4 !important;box-shadow:0 0 0 1px rgba(201,140,152,.25),0 2px 6px rgba(0,0,0,.3) !important;font-weight:700 !important;letter-spacing:.8px !important}
+.btn-clear:hover,.btn-danger-strong:hover{background:linear-gradient(180deg,#a3616c 0%,#834a56 100%) !important;border-color:#dda3ae !important;box-shadow:0 0 0 2px rgba(221,163,174,.28),0 3px 8px rgba(0,0,0,.35) !important}
+.btn-clear:active,.btn-danger-strong:active{transform:translateY(1px) !important}
+.btn-clear:focus-visible,.btn-danger-strong:focus-visible{outline:2px solid #dda3ae !important;outline-offset:2px !important}
+body.katav-light .btn-clear,body.katav-light .btn-danger-strong{background:linear-gradient(180deg,#f0cdd4 0%,#deacb6 100%) !important;border-color:#c07f8d !important;color:#43222a !important;box-shadow:0 0 0 1px rgba(192,127,141,.3) !important}
+
+/* ===== KATAV v5: START and CLEAR share one exact palette by ID ===== */
+#start_btn,#start_full_btn,#clear_media_btn,#clear_trans_files_btn,.btn-clear,.btn-danger-strong{background:linear-gradient(180deg,#48678c 0%,#3c5675 100%) !important;border:1px solid #587aa1 !important;color:#e9f0f7 !important;text-shadow:0 1px 2px rgba(0,0,0,.5) !important;box-shadow:inset 0 1px 0 rgba(255,255,255,.2),inset 0 0 10px rgba(0,0,0,.2),0 3px 6px rgba(0,0,0,.4) !important;font-weight:600 !important;letter-spacing:.4px !important}
+#start_btn:hover,#start_full_btn:hover,#clear_media_btn:hover,#clear_trans_files_btn:hover,.btn-clear:hover,.btn-danger-strong:hover{background:linear-gradient(180deg,#53749c 0%,#446184 100%) !important;border-color:#6b8cb2 !important;color:#e9f0f7 !important;box-shadow:inset 0 1px 0 rgba(255,255,255,.3),0 5px 10px rgba(234,88,12,.4) !important;transform:translateY(-1px) !important}
+#start_btn:active,#start_full_btn:active,#clear_media_btn:active,#clear_trans_files_btn:active,.btn-clear:active,.btn-danger-strong:active{transform:translateY(1px) !important;box-shadow:none !important}
+#start_btn:focus-visible,#start_full_btn:focus-visible,#clear_media_btn:focus-visible,#clear_trans_files_btn:focus-visible,.btn-clear:focus-visible,.btn-danger-strong:focus-visible{outline:2px solid #7d9dc4 !important;outline-offset:2px !important}
+body.katav-light #start_btn,body.katav-light #start_full_btn,body.katav-light #clear_media_btn,body.katav-light #clear_trans_files_btn,body.katav-light .btn-clear,body.katav-light .btn-danger-strong{background:linear-gradient(180deg,#ccd9e9 0%,#b6c8de 100%) !important;border-color:#9db3cf !important;color:#26374a !important}
+body.katav-light #start_btn:hover,body.katav-light #start_full_btn:hover,body.katav-light #clear_media_btn:hover,body.katav-light #clear_trans_files_btn:hover,body.katav-light .btn-clear:hover,body.katav-light .btn-danger-strong:hover{background:linear-gradient(180deg,#ccd9e9 0%,#b6c8de 100%) !important;border-color:#9db3cf !important;color:#26374a !important}
 """
 
 # ==============================================================================
@@ -461,3 +563,64 @@ MISTRAL_MODELS = [
     "mistral-small-latest",
     "open-mistral-nemo"
 ]
+
+# ==============================================================================
+# 7b. CUSTOM AI PROVIDERS (OpenAI-compatible, managed from the UI)
+# ==============================================================================
+import os as _os_cp
+import json as _json_cp
+
+CUSTOM_PROVIDERS_FILE = _os_cp.path.join(_os_cp.path.dirname(_os_cp.path.abspath(__file__)), "custom_providers.json")
+
+
+def load_custom_providers() -> dict:
+    try:
+        if _os_cp.path.exists(CUSTOM_PROVIDERS_FILE):
+            with open(CUSTOM_PROVIDERS_FILE, "r", encoding="utf-8") as fh:
+                data = _json_cp.load(fh)
+            if isinstance(data, dict):
+                return {str(k): v for k, v in data.items() if isinstance(v, dict)}
+    except Exception:
+        pass
+    return {}
+
+
+def custom_provider_names() -> list:
+    return sorted(load_custom_providers().keys())
+
+
+def get_custom_provider(name):
+    key = str(name or "").strip()
+    if not key:
+        return None
+    return load_custom_providers().get(key)
+
+
+def save_custom_provider(name, base_url, api_key="", models=None) -> dict:
+    key = str(name or "").strip()
+    url = str(base_url or "").strip().rstrip("/")
+    if not key:
+        raise ValueError("Provider name is required.")
+    if not url:
+        raise ValueError("Base URL is required, for example http://127.0.0.1:1234/v1")
+    data = load_custom_providers()
+    existing = data.get(key, {})
+    data[key] = {
+        "base_url": url,
+        "api_key": api_key if api_key else existing.get("api_key", ""),
+        "models": list(models) if models else existing.get("models", []),
+    }
+    with open(CUSTOM_PROVIDERS_FILE, "w", encoding="utf-8") as fh:
+        _json_cp.dump(data, fh, indent=4, ensure_ascii=False)
+    return data[key]
+
+
+def delete_custom_provider(name) -> bool:
+    key = str(name or "").strip()
+    data = load_custom_providers()
+    if key not in data:
+        return False
+    data.pop(key, None)
+    with open(CUSTOM_PROVIDERS_FILE, "w", encoding="utf-8") as fh:
+        _json_cp.dump(data, fh, indent=4, ensure_ascii=False)
+    return True
