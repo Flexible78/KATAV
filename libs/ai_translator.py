@@ -8,7 +8,7 @@ def chunk_text(text, chunk_size, by_paragraphs=False):
     if by_paragraphs:
         blocks = text.strip().split('\n\n')
     else:
-        blocks = text.strip().split('\n\n') # Для SRT тоже используем двойной перенос
+        blocks = text.strip().split('\n\n') # Use a double line break for SRT too
     
     return [blocks[i:i + chunk_size] for i in range(0, len(blocks), chunk_size)]
 
@@ -24,7 +24,7 @@ def translate_content(provider, api_key, target_langs, model_name, sys_prompt, c
     final_base_name = ""
     is_srt_mode = (translate_mode == "Субтитры (.srt)")
     
-    # 1. ЧТЕНИЕ ИСХОДНИКА
+    # 1. READ THE SOURCE
     if is_srt_mode:
         if custom_srt_file is not None:
             try:
@@ -43,14 +43,14 @@ def translate_content(provider, api_key, target_langs, model_name, sys_prompt, c
                 out_dir_for_save = hidden_out_dir; final_base_name = hidden_base_name
             except Exception as e: return f"❌ Ошибка чтения файла Whisper: {e}", None
     else:
-        # Режим простого текста
+        # Plain text mode
         if not plain_text_input.strip():
             return "❌ Ошибка: Текстовое поле пустое!", None
         original_text = plain_text_input
         out_dir_for_save = hidden_out_dir if hidden_out_dir else os.path.expanduser("~")
         final_base_name = hidden_base_name if hidden_base_name else "Plain_Text"
 
-    # 2. НАРЕЗКА НА КУСКИ
+    # 2. SPLIT INTO CHUNKS
     chunk_size = 60 if is_srt_mode else 30
     chunks = chunk_text(original_text, chunk_size, by_paragraphs=not is_srt_mode)
     
@@ -59,7 +59,7 @@ def translate_content(provider, api_key, target_langs, model_name, sys_prompt, c
     
     saved_files = []
     
-    # Подключаем библиотеки только при необходимости
+    # Import libraries only when needed
     try:
         if provider == "Google Gemini":
             import google.generativeai as genai
@@ -72,7 +72,7 @@ def translate_content(provider, api_key, target_langs, model_name, sys_prompt, c
     except Exception as e:
         return f"❌ Ошибка инициализации API: {e}", None
 
-    # 3. ЦИКЛ ПЕРЕВОДА ДЛЯ КАЖДОГО ЯЗЫКА
+    # 3. TRANSLATION LOOP FOR EACH LANGUAGE
     for target_lang in target_langs:
         translated_blocks = []
         log_func(f"\n🌍 Перевод на язык: {target_lang}")
@@ -102,13 +102,13 @@ def translate_content(provider, api_key, target_langs, model_name, sys_prompt, c
                     raise Exception("API вернул пустой ответ")
                     
                 if idx < len(chunks) - 1:
-                    time.sleep(3) # Пауза между кусками
+                    time.sleep(3) # Pause between chunks
                     
             except Exception as e:
                 log_func(f"❌ ОШИБКА перевода куска {idx+1}: {e}")
                 translated_blocks.append(f"==== ОШИБКА ПЕРЕВОДА БЛОКА ====\n{chunk_text_str}")
 
-        # Сохранение файла для текущего языка
+        # Save the file for the current language
         final_translated_text = "\n\n".join(translated_blocks)
         
         lang_map = {"Русский": "RU", "English": "EN", "עברית (Hebrew)": "HE", "Українська": "UK"}

@@ -2,11 +2,11 @@ import os
 import json
 from typing import Dict, Any
 
-# Импортируем SETTINGS_FILE из config.py
+# Import SETTINGS_FILE from config.py
 from config import SETTINGS_FILE
 
 # ==============================================================================
-# 5. МЕНЕДЖЕР СОСТОЯНИЙ ИНТЕРФЕЙСА (АВТОСОХРАНЕНИЕ)
+# 5. UI STATE MANAGER (AUTOSAVE)
 # ==============================================================================
 class UIStateManager:
     def __init__(self, filepath: str = SETTINGS_FILE):

@@ -6,35 +6,35 @@ import glob
 import time
 from typing import List, Dict, Any, Tuple
 
-import gradio as gr # Импорт Gradio здесь только для gr.update, пересмотреть, если srt_processor будет без Gradio
+import gradio as gr # Gradio is imported here only for gr.update; revisit if srt_processor drops Gradio
 
-from utils import log_to_terminal, sanitize_srt_text, interruptible_sleep, log_queue # Импортируем нужные утилиты
-from config import DEFAULT_OUTPUT_DIR # Импортируем DEFAULT_OUTPUT_DIR
+from utils import log_to_terminal, sanitize_srt_text, interruptible_sleep, log_queue # Import the required utilities
+from config import DEFAULT_OUTPUT_DIR # Import DEFAULT_OUTPUT_DIR
 
 # ==============================================================================
-# 9. СИСТЕМНЫЕ УТИЛИТЫ И АВТО-ОЧИСТИТЕЛЬ (SANITIZER) (часть функций)
+# 9. SYSTEM UTILITIES AND AUTO-CLEANER (SANITIZER) (some functions)
 # ==============================================================================
 def chunk_text(text: str, chunk_size: int, by_paragraphs: bool = False) -> List[List[str]]:
     if by_paragraphs:
         blocks = text.strip().split('\n\n')
     else:
-        blocks = text.strip().split('\n') # Для SRT, где каждый блок - это строка субтитров
+        blocks = text.strip().split('\n') # For SRT, where each block is one subtitle line
         
-    # Удаляем пустые строки/блоки, которые могли появиться из-за split
+    # Remove empty lines/blocks that may have appeared after split
     blocks = [block for block in blocks if block.strip()]
 
-    # Собираем блоки в чанки, стараясь не разбивать SRT-блоки (номер, таймкод, текст)
-    # Для SRT-режима, chunk_size - это количество *полных* SRT-блоков.
-    # Для обычного текста, chunk_size - это количество абзацев/строк.
+    # Group blocks into chunks, trying not to split SRT blocks (number, timecode, text)
+    # In SRT mode, chunk_size is the number of *complete* SRT blocks.
+    # For plain text, chunk_size is the number of paragraphs/lines.
 
     if by_paragraphs:
-        # Если режим по абзацам (для обычного текста), просто делим список абзацев
+        # In paragraph mode (plain text), just split the paragraph list
         return [blocks[i:i + chunk_size] for i in range(0, len(blocks), chunk_size)]
     else:
-        # Для SRT-режима, мы предполагаем, что text уже представляет собой последовательность SRT-блоков,
-        # разделённых \n\n. Функция sanitize_srt_text уже убирает мусор. 
-        # Здесь просто делим полученные блоки на части.
-        # Каждый элемент в `blocks` уже является полным SRT-блоком (или его частью до \n\n)
+        # In SRT mode we assume text is already a sequence of SRT blocks,
+        # separated by \n\n. sanitize_srt_text already removes the junk.
+        # Here we just split the resulting blocks into parts.
+        # Each element in `blocks` is already a complete SRT block (or its part before \n\n)
         chunks = []
         current_chunk = []
         srt_block_pattern = re.compile(r'^\d+$|^\d{2}:\d{2}:\d{2}[,\.]\d{3}\s*-->\s*\d{2}:\d{2}:\d{2}[,\.]\d{3}$')
@@ -43,23 +43,23 @@ def chunk_text(text: str, chunk_size: int, by_paragraphs: bool = False) -> List[
         current_srt_block_lines = []
         block_num = 0
 
-        # Пересобираем в логические SRT-блоки, чтобы не разбивать их
+        # Reassemble into logical SRT blocks so they aren't split
         for line in blocks:
             if srt_block_pattern.match(line):
-                # Если это номер блока или таймкод, значит, мы начинаем новый SRT-блок
+                # If it's a block number or timecode, a new SRT block starts
                 if current_srt_block_lines:
                     temp_blocks.append('\n'.join(current_srt_block_lines))
                     current_srt_block_lines = []
                 current_srt_block_lines.append(line)
-                if line.isdigit(): # Это номер блока, увеличиваем счетчик
+                if line.isdigit(): # It's a block number, increment the counter
                     block_num = int(line)
-            elif line.strip(): # Это строка текста, добавляем к текущему SRT-блоку
+            elif line.strip(): # It's a text line, append to the current SRT block
                 current_srt_block_lines.append(line)
 
         if current_srt_block_lines:
             temp_blocks.append('\n'.join(current_srt_block_lines))
 
-        # Теперь temp_blocks содержит целые SRT-блоки, которые можно делить по chunk_size
+        # Now temp_blocks holds whole SRT blocks that can be split by chunk_size
         for i in range(0, len(temp_blocks), chunk_size):
             chunks.append(temp_blocks[i:i + chunk_size])
 
@@ -67,7 +67,7 @@ def chunk_text(text: str, chunk_size: int, by_paragraphs: bool = False) -> List[
 
 
 # ==============================================================================
-# 11. БРОНЕБОЙНЫЙ ПАРСЕР И ЭКСТРАКТОР (JSON + CSV EXPORT)
+# 11. BULLETPROOF PARSER AND EXTRACTOR (JSON + CSV EXPORT)
 # ==============================================================================
 def robust_parse_srt(content: str, lang_key: str, dict_data: dict, is_srt: bool = True) -> None:
     if is_srt:
@@ -110,9 +110,9 @@ def robust_parse_srt(content: str, lang_key: str, dict_data: dict, is_srt: bool 
             dict_data[clean_idx][lang_key] = text
 
 def export_to_json_dict(srt_local_path: str, custom_srt_files: List[Any], plain_text: str, hidden_actual_out_dir: str, hidden_srt_paths: str) -> Tuple[str, List[str]]:
-    global log_queue # Используем глобальную очередь логов из utils
+    global log_queue # Use the global log queue from utils
     
-    # Глобальные переменные прогресса из utils (если они еще не глобальные здесь)
+    # Global progress variables from utils (if they aren't global here yet)
     from utils import current_percent, time_elapsed, time_remaining, audio_speed, current_action, stop_requested
     global current_percent, time_elapsed, time_remaining, audio_speed, current_action, stop_requested
 
@@ -203,7 +203,7 @@ def export_to_json_dict(srt_local_path: str, custom_srt_files: List[Any], plain_
                 try:
                     with open(fpath, 'r', encoding='utf-8') as f: content = f.read()
                     
-                    # 1) АВТОМАТИЧЕСКАЯ ГЕНЕРАЦИЯ ЧИСТОГО TXT ПРИ ЭКСТРАКЦИИ
+                    # 1) AUTOMATIC CLEAN TXT GENERATION ON EXTRACTION
                     clean_text = re.sub(r'(?m)^\d+\s*\n\d{2}:\d{2}:\d{2}[,\.]\d{3}\s*-->\s*\d{2}:\d{2}:\d{2}[,\.]\d{3}\s*\n', '', content)
                     clean_text = re.sub(r'<[^>]+>', '', clean_text)
                     clean_text = re.sub(r'\n\n+', '\n', clean_text).strip()
@@ -216,7 +216,7 @@ def export_to_json_dict(srt_local_path: str, custom_srt_files: List[Any], plain_
                         
                     all_clean_editor_text += f"\n--- {fname} ({lang_key}) ---\n{clean_text}\n"
 
-                    # 2) ПАРСИНГ ДЛЯ СЛОВАРЯ (С ТАЙМКОДАМИ ДЛЯ СШИВКИ)
+                    # 2) PARSING FOR THE DICTIONARY (WITH TIMECODES FOR STITCHING)
                     is_srt = fname.lower().endswith('.srt')
                     robust_parse_srt(content, lang_key, dict_data, is_srt=is_srt)
                     langs_found.add(lang_key)
@@ -231,13 +231,13 @@ def export_to_json_dict(srt_local_path: str, custom_srt_files: List[Any], plain_
                     
             sorted_list = sorted(dict_data.values(), key=safe_sort_key)
             
-            # --- ВЫРЕЗАЕМ МУСОР (УДАЛЯЕМ ID И TIME ИЗ ФИНАЛЬНЫХ ФАЙЛОВ) ---
+            # --- STRIP THE JUNK (REMOVE ID AND TIME FROM FINAL FILES) ---
             clean_export_list = [{k: v for k, v in item.items() if k not in ["id", "time"]} for item in sorted_list]
 
             target_dir = list(scan_dirs)[0] if scan_dirs else DEFAULT_OUTPUT_DIR
             p_tag = "_PARTIAL" if stop_requested else ""
             
-            # --- СОХРАНЕНИЕ JSON ---
+            # --- SAVE JSON ---
             json_path = os.path.join(target_dir, f"{base}_MULTILANG_DICT{p_tag}.json")
             try:
                 with open(json_path, 'w', encoding='utf-8') as f:
@@ -245,7 +245,7 @@ def export_to_json_dict(srt_local_path: str, custom_srt_files: List[Any], plain_
                 saved_jsons.append(json_path)
             except Exception as e: log_to_terminal(f"Ошибка сохранения JSON: {e}")
                 
-            # --- СОХРАНЕНИЕ CSV (Для F5-TTS и Excel) ---
+            # --- SAVE CSV (for F5-TTS and Excel) ---
             csv_path = os.path.join(target_dir, f"{base}_MULTILANG_DICT{p_tag}.csv")
             try:
                 lang_headers = set()
@@ -253,7 +253,7 @@ def export_to_json_dict(srt_local_path: str, custom_srt_files: List[Any], plain_
                     for k in item.keys():
                         lang_headers.add(k)
                 
-                # Сортируем заголовки, чтобы ORIGINAL был первым
+                # Sort the headers so ORIGINAL comes first
                 lang_list = list(lang_headers)
                 if "ORIGINAL" in lang_list:
                     lang_list.remove("ORIGINAL")
@@ -261,10 +261,10 @@ def export_to_json_dict(srt_local_path: str, custom_srt_files: List[Any], plain_
                     
                 headers = lang_list
                 
-                # Используем utf-8-sig (с BOM), чтобы Excel корректно читал кириллицу и иврит
+                # Use utf-8-sig (with BOM) so Excel reads Cyrillic and Hebrew correctly
                 with open(csv_path, 'w', encoding='utf-8-sig', newline='') as f:
                     writer = csv.DictWriter(f, fieldnames=headers, quoting=csv.QUOTE_MINIMAL)
-                    # ЗАГОЛОВКИ УБРАНЫ (ПО ЗАПРОСУ ПОЛЬЗОВАТЕЛЯ)
+                    # HEADERS REMOVED (AT THE USER'S REQUEST)
                     # writer.writeheader() 
                     writer.writerows(clean_export_list)
                 saved_jsons.append(csv_path)
@@ -292,7 +292,7 @@ def export_to_json_dict(srt_local_path: str, custom_srt_files: List[Any], plain_
             csv_path = os.path.join(target_dir, "Text_Translation_DICT.csv")
             with open(csv_path, 'w', encoding='utf-8-sig', newline='') as f:
                 writer = csv.DictWriter(f, fieldnames=["text"], quoting=csv.QUOTE_MINIMAL)
-                # ЗАГОЛОВКИ УБРАНЫ
+                # HEADERS REMOVED
                 writer.writerows(dict_data)
             saved_jsons.append(csv_path)
             

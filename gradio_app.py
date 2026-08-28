@@ -8,7 +8,7 @@ import subprocess
 import sys
 from typing import List, Any
 
-# Импорты из других модулей
+# Imports from other modules
 from config import (
     DEFAULT_OUTPUT_DIR, GOOGLE_STUDIO_MODELS, 
     LOCAL_PROXY_MODELS, OPENROUTER_MODELS, OMNIROUTE_MODELS, FREEWAY_MODELS, MISTRAL_MODELS,
@@ -19,7 +19,7 @@ from utils import (
     log_to_terminal, stop_all_processes, restart_app, kill_program,
     log_queue
 )
-# Оставляем только старые безопасные функции из dialogs
+# Keep only the old safe functions from dialogs
 from dialogs import (
     read_clipboard_paths, read_clipboard_text, open_folder_dialog, open_files_batch_dialog,
     open_dir_batch_dialog, open_srt_batch_dialog, open_dir_srt_dialog,
@@ -424,7 +424,7 @@ def process_logs(current_log: str):
 
 
 # ==============================================================================
-# 🚀 НОВЫЕ БРОНЕБОЙНЫЕ ФУНКЦИИ ДЛЯ РАБОТЫ С ФАЙЛАМИ СУБТИТРОВ
+# 🚀 NEW BULLETPROOF FUNCTIONS FOR SUBTITLE FILES
 # ==============================================================================
 def smart_copy_srt(hidden_paths: str, manual_path: str):
     """Копирует ФАЙЛЫ как объекты в буфер обмена Windows (Ctrl+C)"""
@@ -436,9 +436,9 @@ def smart_copy_srt(hidden_paths: str, manual_path: str):
     
     try:
         CREATE_NO_WINDOW = 0x08000000
-        # Оборачиваем каждый путь в одинарные кавычки для PowerShell
+        # Wrap each path in single quotes for PowerShell
         ps_paths = ",".join([f"'{os.path.abspath(p)}'" for p in paths])
-        # Команда PowerShell, которая помещает ФАЙЛ в буфер обмена
+        # PowerShell command that puts the FILE on the clipboard
         cmd = f"Set-Clipboard -Path {ps_paths}"
         subprocess.run(["powershell", "-command", cmd], creationflags=CREATE_NO_WINDOW)
         return f"📋 Copied {len(paths)} files as objects. (Press Ctrl+V in the target Windows folder!)"
@@ -457,7 +457,7 @@ def smart_save_srt(hidden_paths: str, manual_path: str, actual_out_dir: str):
     b_name = os.path.splitext(os.path.basename(path))[0]
     initial_dir = actual_out_dir.replace('\\', '/') if actual_out_dir else os.path.expanduser("~").replace('\\', '/')
     
-    # Изолированный запуск Tkinter (чтобы не вешать Gradio)
+    # Run Tkinter in isolation (so it doesn't block Gradio)
     code = f'''
 import os, shutil
 import tkinter as tk
@@ -534,7 +534,7 @@ def build_app():
         gr.Markdown("<div class='micro-title'>🎙️ KATAV - Speech to Text + AI Translator</div>")
         
         with gr.Row():
-            # ==================== ЛЕВАЯ КОЛОНКА ====================
+            # ==================== LEFT COLUMN ====================
             with gr.Column(scale=5):
                 gr.Markdown("### 📁 MEDIA FILES")
                 
@@ -641,7 +641,7 @@ def build_app():
                             del_all_btn = gr.Button("💣 ALL", size="sm", variant="stop", elem_classes=["fixed-height-btn"])
                             del_status = gr.Markdown("")
                 
-            # ==================== ПРАВАЯ КОЛОНКА ====================
+            # ==================== RIGHT COLUMN ====================
             with gr.Column(scale=4):
                 metrics_panel = gr.HTML(value="<div style='background: rgba(30, 41, 59, 0.8); padding: 15px; border-radius: 12px;'><h3 style='color: white;'>Waiting...</h3></div>")
                 
@@ -687,7 +687,7 @@ def build_app():
                         
                     translate_status = gr.Textbox(label="TRANSLATION STATUS", lines=2, interactive=False)
                         
-                    # 🚀 ИДЕАЛЬНЫЙ ДИЗАЙН: Кнопки файлов и SRT скомпонованы 2х2 точно как на фото!
+                    # 🚀 PERFECT LAYOUT: file and SRT buttons arranged 2x2 exactly like in the photo!
                     with gr.Group():
                         with gr.Row():
                             srt_local_path = gr.Textbox(label="AUTOFILL FILE PATH", value=ui_state.get("trans_srt_path", ""), placeholder="D:\\Video\\docs", scale=5, lines=2)
@@ -886,7 +886,7 @@ def build_app():
         
         save_text_btn.click(fn=save_edited_text_dialog, inputs=[clean_text_output, hidden_base_name, hidden_actual_out_dir, save_format], outputs=save_status)
         
-        # 🚀 Вызов умных функций, которые сами выберут откуда взять путь к файлу
+        # 🚀 Call smart functions that pick the file path themselves
         copy_srt_btn.click(
             fn=smart_copy_srt,
             inputs=[hidden_srt_paths, srt_local_path],

@@ -145,7 +145,7 @@ def translate_content(
     sys_prompt: str, custom_srt_files: List[Any], srt_local_path: str,
     hidden_actual_out_dir: str, hidden_srt_paths: str, translate_mode: str, plain_text_input: str,
     force_all_langs: bool = False, source_language: str = "auto"
-) -> Tuple[str, str, str]: # 🚀 Возвращаем три параметра!
+) -> Tuple[str, str, str]: # 🚀 Return three parameters!
     if getattr(utils, 'stop_requested', False):
         return "⚠️ Translation cancelled before start.", "", ""
 
@@ -366,7 +366,7 @@ def translate_content(
                 clean_text = re.sub(r'(?m)^\d+\s*\n\d{2}:\d{2}:\d{2}[,\.]\d{3}\s*-->\s*\d{2}:\d{2}:\d{2}[,\.]\d{3}\s*\n', '', clean_text)
                 clean_text = re.sub(r'\n\n+', '\n', clean_text).strip()
             all_clean_editor_text += f"\n--- {base_name} (ORIGINAL) ---\n{clean_text}\n"
-            saved_files.append(fpath) # Сохраняем оригинал
+            saved_files.append(fpath) # Save the original
             continue
             
         source_lang_code = file_source_langs.get(fpath, "auto")
@@ -408,7 +408,7 @@ def translate_content(
                     clean_text = re.sub(r'(?m)^\d+\s*\n\d{2}:\d{2}:\d{2}[,\.]\d{3}\s*-->\s*\d{2}:\d{2}:\d{2}[,\.]\d{3}\s*\n', '', clean_text)
                     clean_text = re.sub(r'\n\n+', '\n', clean_text).strip()
                 all_clean_editor_text += f"\n--- {base_name} ({target_lang}) ---\n{clean_text}\n"
-                saved_files.append(fpath) # Сохраняем оригинал
+                saved_files.append(fpath) # Save the original
                 continue
 
             translated_blocks = []
@@ -607,7 +607,7 @@ def translate_content(
         live_log(f"[TRANSLATE] Batch finished: {len(file_chunks_map)} file(s), {len(target_langs)} language(s), {files_written_count} file(s) written.")
 
     status_msg = f"{'⚠️ Interrupted. Partial progress saved' if getattr(utils, 'stop_requested', False) else '✅ Completed'}: {len(saved_files)} files."
-    # 🚀 Возвращаем ТРИ переменные (третья - список путей к SRT через |)
+    # 🚀 Return THREE variables (the third is the list of SRT paths joined by |)
     return status_msg, all_clean_editor_text, "|".join(saved_files)
 
 def check_api(provider: str, current_api_key: str, model_name: str) -> str:

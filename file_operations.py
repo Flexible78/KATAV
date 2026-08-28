@@ -5,12 +5,12 @@ from utils import get_actual_output_dir
 def list_files(manual_path: str, use_custom: bool, custom_dir: str):
     out_dir = get_actual_output_dir(manual_path, use_custom, custom_dir)
     if not os.path.exists(out_dir): 
-        # Обязательно сбрасываем value=[], чтобы снять зависшие галочки
+        # Must reset value=[] to clear stuck checkboxes
         return gr.update(choices=[], value=[]), f"⚠️ Папка не найдена: {out_dir}"
     try:
         files = [f for f in os.listdir(out_dir) if os.path.isfile(os.path.join(out_dir, f))]
         files.sort()
-        # Обновляем список файлов и принудительно снимаем все галочки (value=[])
+        # Refresh the file list and force-uncheck everything (value=[])
         return gr.update(choices=files, value=[]), f"📁 Сканируется: {out_dir}"
     except Exception as e: 
         return gr.update(choices=[], value=[]), f"❌ Ошибка: {e}"
@@ -32,7 +32,7 @@ def delete_selected(selected: list, manual_path: str, use_custom: bool, custom_d
         except Exception: 
             pass
             
-    # Заново сканируем папку. Функция list_files сама обновит список и сбросит галочки
+    # Rescan the folder. list_files itself refreshes the list and clears the checkboxes
     updated_files, _ = list_files(manual_path, use_custom, custom_dir)
     return updated_files, f"✅ Удалено файлов: {deleted_count}"
 
@@ -49,5 +49,5 @@ def delete_all(manual_path: str, use_custom: bool, custom_dir: str):
         except Exception: 
             pass
             
-    # После полного удаления отдаем пустой список и сбрасываем галочки
+    # After a full delete return an empty list and clear the checkboxes
     return gr.update(choices=[], value=[]), f"💣 Очищено файлов: {deleted_count}"

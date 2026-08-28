@@ -5,7 +5,7 @@ import logging
 from typing import List
 
 # ==============================================================================
-# 8. ВЗАИМОДЕЙСТВИЕ С ОС И ДИАЛОГАМИ (ПРЯМЫЕ ПУТИ И БУФЕР)
+# 8. OS AND DIALOG INTERACTION (DIRECT PATHS AND CLIPBOARD)
 # ==============================================================================
 def read_clipboard_text() -> str:
     """Return raw clipboard text, no filesystem filtering."""
@@ -207,7 +207,7 @@ else:
     logging.warning("[SAVE] Пользователь отменил сохранение или произошла ошибка диалога")
     return "⚠️ Отменено."
 
-# 🚀 НОВЫЕ ФУНКЦИИ ДЛЯ РАБОТЫ С СУБТИТРАМИ (SRT) НАПРЯМУЮ
+# 🚀 NEW FUNCTIONS FOR WORKING WITH SUBTITLES (SRT) DIRECTLY
 def copy_srt_to_clipboard(file_paths: str) -> str:
     if not file_paths: 
         return "⚠️ Нет SRT файлов (Сначала переведите или транскрибируйте)!"
@@ -220,7 +220,7 @@ def copy_srt_to_clipboard(file_paths: str) -> str:
             with open(p, 'r', encoding='utf-8') as f:
                 content += f.read() + "\n\n"
         
-        # Копируем через PowerShell для поддержки огромных текстов и UTF-8
+        # Copy via PowerShell to support huge texts and UTF-8
         import tempfile
         temp_path = os.path.join(tempfile.gettempdir(), "clip_srt_temp.txt").replace('\\', '/')
         with open(temp_path, 'w', encoding='utf-8') as f: f.write(content)
@@ -243,7 +243,7 @@ def save_srt_dialog(file_paths: str, actual_out_dir: str) -> str:
     if not paths: 
         return "⚠️ Файлы не найдены на диске!"
     
-    # Сохраняем первый файл из списка (обычно он один)
+    # Save the first file from the list (usually there's just one)
     path = paths[0]
     b_name = os.path.splitext(os.path.basename(path))[0]
     initial_dir = actual_out_dir.replace('\\', '/') if actual_out_dir else os.path.expanduser("~").replace('\\', '/')
