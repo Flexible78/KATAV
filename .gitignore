@@ -3,6 +3,7 @@
 .env.*
 whisper_api_keys.json
 whisper_settings.json
+custom_providers.json
 google_client_secret.json
 google_drive_token.json
 !google_client_secret.example.json
@@ -28,6 +29,7 @@ hf_cache/
 *.log
 *.tmp
 *.bak
+*.bak_*
 .katav_pids
 .katav_port
 

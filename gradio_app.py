@@ -8,7 +8,9 @@ import json
 import time
 import subprocess
 import sys
+import html
 from typing import List, Any
+from functools import partial
 
 # Импорты из других модулей
 from config import (
@@ -18,33 +20,39 @@ from config import (
     TARGET_LANGUAGES, TARGET_LANGUAGE_DEFAULTS,
 )
 from ui_manager import ui_state
+from source_inputs import classify_sources, merge_paths
 from utils import (
     log_to_terminal, stop_all_processes, restart_app, kill_program,
     log_queue
 )
 # Оставляем только старые безопасные функции из dialogs
 from dialogs import (
-    read_clipboard_paths, read_clipboard_text, open_folder_dialog, open_files_batch_dialog,
+    read_clipboard_paths, read_clipboard_text, read_clipboard_sources, open_folder_dialog, open_files_batch_dialog,
     open_dir_batch_dialog, open_srt_batch_dialog, open_dir_srt_dialog,
     save_edited_text_dialog
 )
-from file_operations import list_files, delete_selected, delete_all
+from file_operations import list_files, delete_selected, delete_all, open_output_folder, open_source_file
 from whisper_core import run_transcription
 from srt_processor import export_to_json_dict
 from batch_results import join_batch_results, zip_batch_results
 
 from ai_translator import translate_content, check_api, fetch_models
 from queue_manager import batch_queue, format_duration
-from google_drive import get_drive_status, sign_in_to_google_drive, is_google_drive_url
+from google_drive import is_google_drive_url
 import utils 
 
 GROQ_MODELS = [
-    "openai/gpt-oss-120b",
     "openai/gpt-oss-20b",
+    "openai/gpt-oss-120b",
     "openai/gpt-oss-safeguard-20b",
-    "llama3-70b-8192",
-    "mixtral-8x7b-32768"
+    "qwen/qwen3.8-27b",
 ]
+
+def preferred_translation_model(provider, saved_model):
+    """Use a general translator instead of Groq's moderation/safeguard model."""
+    if provider == 'Groq (OSS 120b)' and saved_model in ('', 'auto', 'openai/gpt-oss-safeguard-20b'):
+        return 'openai/gpt-oss-20b'
+    return saved_model
 
 
 def load_keys_safe() -> dict:
@@ -166,7 +174,8 @@ def prepare_start(
     use_beep_off_val: bool, use_custom_output_val: bool, output_dir_val: str,
     plain_text_output_val: bool = False,
     skip_done_val: bool = True, use_study_deck_val: bool = False,
-    study_min_count_val: float = 2, study_max_terms_val: float = 300
+    study_min_count_val: float = 2, study_max_terms_val: float = 300,
+    power_enabled_val: bool = False, power_mode_val: str = "SHUT DOWN"
 ):
     global batch_items, batch_total, batch_completed, batch_failed, batch_current_name, batch_current_idx
     global transcribe_percent, translate_percent, translation_seen, current_phase
@@ -178,6 +187,9 @@ def prepare_start(
     # ── Build queue in QueueManager ──
     utils.log_queue.put("[STAGE] Building queue...\n")
     batch_queue.reset()
+    batch_queue.set_power_action("sleep" if str(power_mode_val).upper() == "SLEEP" else "shutdown")
+    if power_enabled_val:
+        batch_queue.enable_shutdown()
 
     # Add local files from manual_path
     mp = (manual_path_val or "").strip()
@@ -236,6 +248,41 @@ def prepare_start(
         batch_queue.set_settings_snapshot(qi.idx, settings_snap)
 
     return gr.update(elem_classes=["status-running"])
+
+
+def select_output_folder(current_path: str, use_custom: bool):
+    """A successful BROWSE selection activates the destination; cancel preserves it."""
+    selected = open_folder_dialog()
+    return (selected, True) if selected else (current_path, use_custom)
+
+
+def finish_run(enabled, manual_path_val, use_custom, custom_dir, actual_dir,
+               result_paths, translation_status="", *, translation=False):
+    """Finalize only the last stage: reveal real results, then arm the power timer."""
+    candidates = (result_paths or "").split("|") if isinstance(result_paths, str) else (result_paths or [])
+    paths = [p for p in candidates
+             if p and os.path.isfile(p) and os.path.getsize(p) > 0]
+    directories = list(dict.fromkeys(os.path.dirname(os.path.abspath(p)) for p in paths))
+    target = directories[-1] if directories else actual_dir
+    if enabled:
+        for directory in directories:
+            try:
+                open_output_folder(directory)
+                gr.Info("Output folder opened: " + directory)
+            except Exception as e:
+                gr.Warning("Could not open output folder: " + str(e))
+    succeeded = bool(paths) and not utils.stop_requested
+    if translation:
+        succeeded = succeeded and str(translation_status).startswith("✅ Completed:")
+    else:
+        items = batch_queue.get_items()
+        succeeded = succeeded and any(it.status == "done" for it in items)
+        succeeded = succeeded and not any(it.status in ("queued", "running") for it in items)
+    message = batch_queue.check_and_schedule_shutdown(successful_run=succeeded)
+    if message:
+        utils.log_queue.put("[POWER] " + message + "\n")
+        gr.Info(message)
+    return target or ""
 
 
 def eco_preset():
@@ -411,10 +458,12 @@ def process_logs(current_log: str):
     sd = batch_queue.get_shutdown_status()
     shutdown_html = ""
     if sd["scheduled"]:
-        _sd_msg = sd.get("message") or "Batch complete. Windows will shut down in 60 seconds."
+        _sd_msg = html.escape(sd.get("message") or "Batch complete. Windows will shut down in 60 seconds.")
         shutdown_html = '<div style="margin-top:8px;padding:8px;background:rgba(138,115,80,0.12);border:1px solid #7d6a4c;border-radius:6px;text-align:center;"><span style="color:#c2ab86;font-weight:600;">⏱ ' + _sd_msg + '</span></div>'
     elif sd["cancelled"]:
-        shutdown_html = '<div style="margin-top:8px;padding:8px;background:rgba(111,156,141,0.12);border:1px solid #5f8a7c;border-radius:6px;text-align:center;"><span style="color:#9dc4b6;">Shutdown cancelled.</span></div>'
+        shutdown_html = '<div style="margin-top:8px;padding:8px;color:#9dc4b6;">' + html.escape(sd.get("message") or "Power action cancelled.") + '</div>'
+    elif sd.get("message"):
+        shutdown_html = '<div style="margin-top:8px;padding:8px;color:#e6a3a3;">' + html.escape(sd["message"]) + '</div>'
 
     # ── Metrics panel (K2: honest ETA, TOTAL AUDIO label, single-file layout) ──
     batch_total_dur = batch_queue.get_total_media_seconds()
@@ -568,6 +617,141 @@ def append_clipboard_to_queue(current_path: str) -> str:
     return append_to_path(current_path, new_paths) if new_paths else (current_path or "")
 
 
+def add_smart_sources(text, current_urls, current_media, current_documents, files=None):
+    sources = classify_sources(text, files)
+    urls = current_urls or ""
+    for url in sources['urls']:
+        handler = append_playlist_to_input if _is_playlist_url(url) else append_url_to_input
+        urls, _ = handler(urls, url)
+    media = merge_paths(current_media, sources['media'])
+    documents = merge_paths(current_documents, sources['documents'])
+    counts = f"Sources: {len([u for u in urls.splitlines() if u.strip()])} links · {len([p for p in media.split('|') if p.strip()])} media · {len([p for p in documents.split('|') if p.strip()])} documents"
+    if sources['errors']:
+        # Never echo names or paths of sources back to the screen.
+        skipped = f"{len(sources['errors'])} item(s) skipped: unsupported, unreadable or invalid"
+        gr.Warning(skipped)
+        counts += " — " + skipped
+    return urls, media, documents, text if sources['errors'] else "", counts
+
+
+def _source_entries(urls, media, documents, results=None):
+    entries, seen = [], set()
+    result_paths = results.split('|') if isinstance(results, str) else (results or [])
+    for label, paths in (('MEDIA', (media or '').split('|')),
+                         ('DOCUMENT', (documents or '').split('|')), ('RESULT', result_paths)):
+        for path in paths:
+            path = str(path).strip()
+            identity = os.path.normcase(os.path.abspath(path)) if path else ''
+            if identity and identity not in seen:
+                seen.add(identity)
+                entries.append((label, path))
+    entries.extend(('LINK', url.strip()) for url in (urls or '').splitlines() if url.strip())
+    return entries
+
+
+def render_source_names(urls, media, documents, results=None):
+    """Show current-session source names in the drop area, never full local paths."""
+    from urllib.parse import urlsplit
+    import ntpath
+    rows = []
+    for index, (label, path) in enumerate(_source_entries(urls, media, documents, results)):
+        if label == 'LINK':
+            try:
+                parsed = urlsplit(path)
+                name = (parsed.hostname or "Link") + parsed.path
+            except ValueError:
+                name = "Link"
+        else:
+            name = ntpath.basename(path.rstrip('/\\'))
+        rows.append('<div class="source-name-row"><span class="source-kind">' + label +
+                    '</span><button type="button" class="source-name source-open-button" title="Open file or link" data-source-index="' +
+                    str(index) + '">' + html.escape(name) + '</button></div>')
+    return '<div class="source-name-list" aria-label="Added sources">' + ''.join(rows) + '</div>' if rows else ""
+
+
+def refresh_source_display(urls, media, documents, results=None):
+    entries = _source_entries(urls, media, documents, results)
+    counts = {label: sum(kind == label for kind, _ in entries) for label in ('LINK', 'MEDIA', 'DOCUMENT', 'RESULT')}
+    status = f"Sources: {counts['LINK']} links · {counts['MEDIA']} media · {counts['DOCUMENT']} documents"
+    if counts['RESULT']:
+        status += f" · {counts['RESULT']} results"
+    return render_source_names(urls, media, documents, results), status if entries else 'No sources added'
+
+
+def open_selected_source(token, urls, media, documents, results=None):
+    entries = _source_entries(urls, media, documents, results)
+    index = str(token or '').split(':', 1)[0]
+    if not index.isdecimal() or int(index) >= len(entries):
+        gr.Warning('Selected source is no longer available.')
+        return
+    kind, path = entries[int(index)]
+    try:
+        if kind == 'LINK':
+            from urllib.parse import urlsplit
+            parsed = urlsplit(path)
+            if parsed.scheme not in ('http', 'https') or not parsed.hostname or parsed.username or parsed.password:
+                raise ValueError('Unsupported link')
+            webbrowser.open(path)
+        else:
+            open_source_file(path)
+    except (OSError, ValueError):
+        gr.Warning('Could not open the selected file or link. Check its availability and default application.')
+
+
+def paste_smart_sources(current_urls, current_media, current_documents):
+    clipboard = read_clipboard_sources()
+    text = "\n".join(clipboard.get("files", [])) or clipboard.get("text", "")
+    if not text.strip():
+        gr.Warning("Clipboard contains no files, folders or links.")
+    result = add_smart_sources(text, current_urls, current_media, current_documents)
+    return (*result[:3], "", result[4])
+
+
+_SMART_SOURCE_JS = """() => {
+    if (window.__katavSmartSources) return;
+    window.__katavSmartSources = true;
+    document.addEventListener('click', event => {
+        const selected = event.target.closest('#source_names [data-source-index]');
+        if (!selected) return;
+        const request = document.querySelector('#source_open_request textarea, #source_open_request input');
+        if (!request) return;
+        const proto = request.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+        Object.getOwnPropertyDescriptor(proto, 'value').set.call(request, selected.dataset.sourceIndex + ':' + Date.now());
+        request.dispatchEvent(new Event('input', {bubbles:true}));
+    }, true);
+    const insert = text => {
+        const input = document.querySelector('#smart_source_input textarea, #smart_source_input input');
+        const button = document.querySelector('#smart_add_btn button, button#smart_add_btn');
+        if (!input || !button || !text) return;
+        const proto = input.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+        Object.getOwnPropertyDescriptor(proto, 'value').set.call(input, text);
+        input.dispatchEvent(new Event('input', {bubbles:true}));
+        setTimeout(() => button.click(), 50);
+    };
+    document.addEventListener('drop', event => {
+        if (!event.target.closest('#smart_dropzone, #smart_source_input')) return;
+        if (event.dataTransfer.files.length) return;
+        const text = event.dataTransfer.getData('text/uri-list').split('\\n').filter(line => !line.startsWith('#')).join('\\n') || event.dataTransfer.getData('text/plain');
+        if (text) { event.preventDefault(); event.stopPropagation(); insert(text); }
+    }, true);
+    document.addEventListener('dragover', event => {
+        if (event.target.closest('#smart_dropzone, #smart_source_input')) event.preventDefault();
+    }, true);
+    document.addEventListener('paste', event => {
+        if (!event.target.closest('#smart_source_input')) return;
+        const text = event.clipboardData.getData('text/plain');
+        if (text) { event.preventDefault(); insert(text); }
+    }, true);
+    document.addEventListener('keydown', event => {
+        if (event.key !== 'Enter' || event.shiftKey || !event.target.closest('#smart_source_input')) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const button = document.querySelector('#smart_add_btn button, button#smart_add_btn');
+        if (button) button.click();
+    }, true);
+}"""
+
+
 def build_app():
     saved_keys = load_keys_safe()
     
@@ -586,51 +770,29 @@ def build_app():
             with gr.Column(scale=5, min_width=420):
                 
                 with gr.Accordion("📁 SOURCES", open=True):
-                    urls_input = gr.Textbox(
-                        label="URLS (one per line)",
-                        value=ui_state.get("whisper_urls", ""),
-                        placeholder="https://youtube.com/watch?v=...",
-                        lines=3
-                    )
                     with gr.Row(elem_classes=["uniform-row"]):
                         new_url_input = gr.Textbox(
-                            label="NEW URL",
-                            placeholder="Paste a URL and click a button",
-                            scale=5
+                            label="LINK, FILE OR FOLDER",
+                            placeholder="Paste / drop a link or path · Enter to add · Shift+Enter for a new line",
+                            scale=5, elem_id="smart_source_input", lines=2
                         )
                     with gr.Row(elem_classes=["uniform-row"]):
-                        add_url_btn = gr.Button("+ URL", variant="secondary", elem_classes=["service-btn"], scale=1, min_width=40)
-                        add_playlist_btn = gr.Button("+ PLAYLIST", variant="secondary", elem_classes=["service-btn"], scale=1, min_width=40)
-                        paste_url_btn = gr.Button("PASTE", variant="secondary", elem_classes=["service-btn"], scale=1, min_width=40)
+                        smart_add_btn = gr.Button("ADD", variant="secondary", elem_id="smart_add_btn", elem_classes=["service-btn"], min_width=40)
+                        smart_paste_btn = gr.Button("PASTE", variant="secondary", elem_classes=["service-btn"], min_width=40)
+                        folder_batch_btn = gr.Button("FOLDER", variant="secondary", elem_classes=["service-btn"], min_width=40)
                         clear_media_btn = gr.Button("CLEAR", variant="secondary", elem_id="clear_media_btn", elem_classes=["service-btn","btn-clear"], scale=1, min_width=40)
+                    with gr.Group(elem_id="smart_source_area"):
+                        source_upload = gr.File(label="Add media, SRT subtitles or text — drop here or click", file_count="multiple", elem_id="smart_dropzone", height=140)
+                        source_names = gr.HTML(value="", elem_id="source_names")
+                    source_open_request = gr.Textbox(value='', show_label=False, elem_id='source_open_request')
+                    source_status = gr.Textbox(value="No sources added", show_label=False, interactive=False, elem_id="source_status")
+                    with gr.Group(visible=False):  # internal session state; names/paths are never displayed
+                        urls_input = gr.Textbox(label="LINKS / PLAYLISTS", value="", lines=2, interactive=False)
+                        manual_path = gr.Textbox(label="MEDIA FILES", value="", lines=2, interactive=False)
+                        source_documents = gr.Textbox(label="DOCUMENTS TO TRANSLATE", value="", lines=2, interactive=False)
+                        srt_local_path = gr.Textbox(label="LAST GENERATED DOCUMENT", value="", interactive=False)
+                    input_file = gr.File(visible=False, file_count="multiple")
                     
-                    with gr.Row(elem_classes=["uniform-row"]):
-                        manual_path = gr.Textbox(
-                            label="FILE / FOLDER PATH", 
-                            value=ui_state.get("whisper_manual_path", ""), 
-                            scale=5
-                        )
-                    with gr.Row(elem_classes=["uniform-row"]):
-                        paste_btn = gr.Button("PASTE", variant="secondary", elem_classes=["service-btn"], scale=1, min_width=40)
-                        file_btn = gr.Button("FILE", variant="secondary", elem_classes=["service-btn"], scale=1, min_width=40)
-                        folder_batch_btn = gr.Button("DIR", variant="secondary", elem_classes=["service-btn"], scale=1, min_width=40)
-                    
-                    input_file = gr.File(
-                        label="Drop files here", 
-                        file_types=["audio", "video"], 
-                        file_count="multiple"
-                    )
-                    
-                    with gr.Row(elem_classes=["uniform-row"]):
-                        drive_status = gr.Textbox(
-                            label="Google Drive",
-                            value=get_drive_status(),
-                            interactive=False,
-                            scale=4,
-                            elem_id="drive_status"
-                        )
-                        signin_google_btn = gr.Button("SIGN IN TO GOOGLE", variant="secondary", elem_classes=["fixed-height-btn"], scale=1, min_width=40)
-                    signin_google_btn.click(fn=sign_in_to_google_drive, outputs=drive_status, queue=False)
                 
                 with gr.Accordion("📤 OUTPUT", open=False):
                     with gr.Row():
@@ -690,12 +852,13 @@ def build_app():
                         with gr.Row():
                             api_provider = gr.Radio(choices=_provider_choices, value=api_provider_val, label="PROVIDER")
                             translate_mode = gr.Radio(choices=["Files", "Text (from Editor)"], value="Files", label="MODE")
-                        with gr.Accordion("CUSTOM AI PROVIDER (OpenAI-compatible)", open=True):
+                        with gr.Accordion("ADD / EDIT CUSTOM AI (OpenAI-compatible)", open=False):
                             gr.Markdown("Register any OpenAI-compatible endpoint (LM Studio, Ollama, vLLM, LiteLLM, corporate gateway). After saving it appears in the PROVIDER list above.")
                             with gr.Row(elem_classes=["uniform-row", "katav-inline-row"], equal_height=True):
                                 custom_name = gr.Textbox(label="NAME", placeholder="My LLM server", scale=3)
                                 custom_base_url = gr.Textbox(label="BASE URL", placeholder="http://127.0.0.1:1234/v1", scale=5)
                                 custom_key = gr.Textbox(label="API KEY (optional)", type="password", scale=3)
+                            custom_models = gr.Textbox(label="MODEL IDs (optional, one per line)", placeholder="For servers without model discovery, enter the exact model ID here.", lines=2)
                             with gr.Row(elem_classes=["uniform-row", "katav-inline-row"], equal_height=True):
                                 custom_add_btn = gr.Button("ADD / UPDATE PROVIDER", variant="primary", elem_classes=["fixed-height-btn", "btn-save"], scale=3)
                                 custom_delete_btn = gr.Button("DELETE PROVIDER", variant="stop", elem_classes=["fixed-height-btn", "btn-danger"], scale=2)
@@ -728,26 +891,17 @@ def build_app():
                         else: init_choices = get_model_choices(LOCAL_PROXY_MODELS)
                         
                         with gr.Row(elem_classes=["uniform-row"]):
-                            api_model = gr.Dropdown(choices=init_choices, value=ui_state.get("trans_model", "auto"), label="MODEL", allow_custom_value=True, scale=4)
+                            api_model = gr.Dropdown(choices=init_choices, value=preferred_translation_model(api_provider_val, ui_state.get("trans_model", "auto")), label="MODEL", allow_custom_value=True, scale=4)
                             check_api_btn = gr.Button("CHECK API", variant="secondary", elem_classes=["fixed-height-btn"], scale=1)
                             refresh_models_btn = gr.Button("🔄", variant="secondary", elem_classes=["fixed-height-btn"], scale=1, min_width=40)
                             
                         translate_status = gr.Textbox(label="TRANSLATION STATUS", lines=2, interactive=False)
                             
-                        with gr.Group():
-                            with gr.Row():
-                                srt_local_path = gr.Textbox(label="AUTOFILL FILE PATH", value=ui_state.get("trans_srt_path", ""), placeholder="D:\\Video\\docs", scale=5, lines=2)
-                                with gr.Column(scale=4, min_width=320):
-                                    with gr.Row(elem_classes=["uniform-row"]):
-                                        clear_trans_files_btn = gr.Button("CLEAR", variant="secondary", elem_id="clear_trans_files_btn", elem_classes=["fixed-height-btn","btn-clear"], min_width=40)
-                                        srt_paste_btn = gr.Button("PASTE", variant="secondary", elem_classes=["fixed-height-btn"], min_width=40)
-                                        srt_file_btn = gr.Button("FILE", variant="secondary", elem_classes=["fixed-height-btn"], min_width=40)
-                                        srt_folder_btn = gr.Button("DIR", variant="secondary", elem_classes=["fixed-height-btn"], min_width=40)
-                                    with gr.Row(elem_classes=["uniform-row"]):
-                                        copy_srt_btn = gr.Button("COPY SRT", variant="primary", elem_classes=["fixed-height-btn","btn-save"])
-                                        save_srt_btn = gr.Button("SAVE SRT AS...", variant="primary", elem_classes=["fixed-height-btn","btn-save"])
-                            
-                        custom_srt = gr.File(label="Drop files here", file_types=[".srt", ".txt", ".csv", ".json", ".pdf", ".md"], file_count="multiple")
+                        gr.Markdown("**Translate an existing SRT:** add it in SOURCES above, choose the target language, then click TRANSLATE. No transcription needed. Click a filename to open it.\n\n**Fast free-tier choice:** Groq → `openai/gpt-oss-20b` (API key and provider quotas apply; not unlimited). Safeguard models are for moderation, not translation.")
+                        with gr.Row(elem_classes=["uniform-row"]):
+                            copy_srt_btn = gr.Button("COPY SRT", variant="primary", elem_classes=["fixed-height-btn","btn-save"])
+                            save_srt_btn = gr.Button("SAVE SRT AS...", variant="primary", elem_classes=["fixed-height-btn","btn-save"])
+                        custom_srt = gr.File(visible=False, file_count="multiple")
                         
                         with gr.Row():
                             translate_btn = gr.Button("TRANSLATE", variant="primary", elem_classes=["fixed-height-btn","btn-primary"])
@@ -833,15 +987,9 @@ def build_app():
                 timer.tick(fn=process_logs, inputs=[output_log], outputs=[output_log, metrics_panel, batch_results_group])
                 
                 clear_media_btn.click(
-                    fn=lambda: ("", "", None, ""),
+                    fn=lambda: ("", "", None, "", "", None, None, "", "No sources added", "", []),
                     inputs=[],
-                    outputs=[urls_input, manual_path, input_file, new_url_input]
-                )
-
-                clear_trans_files_btn.click(
-                    fn=lambda: ("", None),
-                    inputs=[],
-                    outputs=[srt_local_path, custom_srt]
+                    outputs=[urls_input, manual_path, input_file, new_url_input, source_documents, custom_srt, source_upload, hidden_srt_paths, source_status, srt_local_path, hidden_dl_files]
                 )
 
         def update_ui_for_provider(provider: str):
@@ -872,6 +1020,9 @@ def build_app():
             elif provider == "Groq (OSS 120b)":
                 groq_choices = get_cached_or_default("groq", GROQ_MODELS)
                 saved_model = last_models.get("Groq (OSS 120b)", groq_choices[0] if groq_choices else "")
+                saved_model = preferred_translation_model(provider, saved_model)
+                if saved_model and saved_model not in groq_choices:
+                    groq_choices = [saved_model] + groq_choices
                 return gr.update(label="API Key (Groq)", value=keys.get("groq", "")), gr.update(choices=groq_choices, value=saved_model), gr.update(value=DEFAULT_SYSTEM_PROMPT)
             elif provider == "OmniRoute":
                 omniroute_choices = get_cached_or_default("omniroute", get_model_choices(OMNIROUTE_MODELS))
@@ -903,6 +1054,15 @@ def build_app():
                 return gr.update(label="API Key", value=keys.get("google", "")), gr.update(choices=[], value=""), gr.update(value=DEFAULT_SYSTEM_PROMPT)
 
         api_provider.change(fn=update_ui_for_provider, inputs=[api_provider], outputs=[api_key_input, api_model, sys_prompt])
+
+        def populate_custom_editor(provider):
+            from config import get_custom_provider
+            cfg = get_custom_provider(provider)
+            if not cfg:
+                return "", "", "", ""
+            return provider, cfg.get('base_url', ''), "", '\n'.join(cfg.get('models', []))
+
+        api_provider.change(fn=populate_custom_editor, inputs=[api_provider], outputs=[custom_name, custom_base_url, custom_key, custom_models])
 
         def on_save_key(provider: str, api_key_val: str):
             """Save the current API key to whisper_api_keys.json immediately."""
@@ -940,25 +1100,28 @@ def build_app():
             outputs=[translate_status]
         )
 
-        def on_add_custom_provider(name, base_url, key):
+        def on_add_custom_provider(name, base_url, key, manual_models):
             from config import save_custom_provider as _scp, custom_provider_names as _cpn
             label = str(name or "").strip()
             try:
-                cfg = _scp(label, base_url, key or "")
+                entered_models = [model.strip() for model in (manual_models or '').splitlines() if model.strip()]
+                cfg = _scp(label, base_url, key or "", entered_models or None)
+                label = next((saved for saved in _cpn() if saved.casefold() == label.casefold()), label)
             except Exception as e:
                 gr.Warning(str(e))
                 return gr.update(), "Error: " + str(e)
-            models = []
+            models = entered_models or cfg.get('models', [])
             try:
-                models = fetch_models(label, key or cfg.get("api_key", ""))
-                if models:
+                discovered = fetch_models(label, key or cfg.get("api_key", ""))
+                models = list(dict.fromkeys(models + discovered))
+                if discovered:
                     _scp(label, cfg.get("base_url", ""), key or cfg.get("api_key", ""), models)
             except Exception:
-                models = []
+                pass
             choices = _BASE_PROVIDERS + _cpn()
             gr.Info("Provider saved: " + label)
             note = "Saved **" + label + "** -> " + cfg.get("base_url", "")
-            note += " (" + str(len(models)) + " models loaded)" if models else " (models not loaded - use the refresh button)"
+            note += " (" + str(len(models)) + " model IDs available; use CHECK API to verify inference)" if models else " (model discovery unavailable — enter a MODEL ID manually, then CHECK API)"
             return gr.update(choices=choices, value=label), note
 
         def on_delete_custom_provider(name):
@@ -972,7 +1135,7 @@ def build_app():
             gr.Info("Provider deleted: " + label)
             return gr.update(choices=choices, value=choices[0]), "Deleted: " + label
 
-        custom_add_btn.click(fn=on_add_custom_provider, inputs=[custom_name, custom_base_url, custom_key], outputs=[api_provider, custom_status])
+        custom_add_btn.click(fn=on_add_custom_provider, inputs=[custom_name, custom_base_url, custom_key, custom_models], outputs=[api_provider, custom_status])
         custom_delete_btn.click(fn=on_delete_custom_provider, inputs=[custom_name], outputs=[api_provider, custom_status])
 
         def on_refresh_models(provider: str, api_key_val: str):
@@ -1017,28 +1180,19 @@ def build_app():
             outputs=[api_model]
         )
         
-        def paste_url_from_clipboard(current_new_url: str) -> str:
-            txt = read_clipboard_text()
-            lines = [l.strip() for l in txt.splitlines() if l.strip()]
-            urls = [l for l in lines if re.match(r'^https?://', l)]
-            if not urls:
-                gr.Warning("Clipboard contains no http(s) URL.")
-                return current_new_url
-            return "\n".join(urls)
-
-        add_url_btn.click(fn=append_url_to_input, inputs=[urls_input, new_url_input], outputs=[urls_input, new_url_input])
-        new_url_input.submit(fn=append_url_to_input, inputs=[urls_input, new_url_input], outputs=[urls_input, new_url_input])
-        add_playlist_btn.click(fn=append_playlist_to_input, inputs=[urls_input, new_url_input], outputs=[urls_input, new_url_input])
-        new_url_input.submit(fn=append_playlist_to_input, inputs=[urls_input, new_url_input], outputs=[urls_input, new_url_input])
-        paste_url_btn.click(fn=paste_url_from_clipboard, inputs=[new_url_input], outputs=[new_url_input])
-
-        paste_btn.click(fn=append_clipboard_to_queue, inputs=[manual_path], outputs=manual_path)
-        srt_paste_btn.click(fn=read_clipboard_paths, outputs=srt_local_path)
-        file_btn.click(fn=append_files_to_queue, inputs=[manual_path], outputs=manual_path)
-        folder_batch_btn.click(fn=append_folder_to_queue, inputs=[manual_path], outputs=manual_path)
-        folder_btn.click(fn=open_folder_dialog, outputs=output_folder)
-        srt_file_btn.click(fn=open_srt_batch_dialog, outputs=srt_local_path)
-        srt_folder_btn.click(fn=open_dir_srt_dialog, outputs=srt_local_path)
+        source_inputs = [new_url_input, urls_input, manual_path, source_documents]
+        source_outputs = [urls_input, manual_path, source_documents, new_url_input, source_status]
+        display_inputs = [urls_input, manual_path, source_documents, hidden_dl_files]
+        for source_field in display_inputs:
+            source_field.change(fn=refresh_source_display, inputs=display_inputs, outputs=[source_names, source_status], queue=False)
+        source_open_request.input(fn=open_selected_source, inputs=[source_open_request] + display_inputs, outputs=[], queue=False)
+        smart_add_btn.click(fn=add_smart_sources, inputs=source_inputs, outputs=source_outputs)
+        new_url_input.submit(fn=add_smart_sources, inputs=source_inputs, outputs=source_outputs)
+        smart_paste_btn.click(fn=paste_smart_sources, inputs=[urls_input, manual_path, source_documents], outputs=source_outputs)
+        source_upload.upload(fn=lambda files, urls, media, documents: (*add_smart_sources("", urls, media, documents, files), None), inputs=[source_upload, urls_input, manual_path, source_documents], outputs=source_outputs + [source_upload])
+        folder_batch_btn.click(fn=lambda urls, media, documents: add_smart_sources(open_dir_batch_dialog(), urls, media, documents), inputs=[urls_input, manual_path, source_documents], outputs=source_outputs)
+        folder_btn.click(fn=select_output_folder, inputs=[output_folder, use_custom_output], outputs=[output_folder, use_custom_output])
+        output_folder.input(fn=lambda path: bool((path or "").strip()), inputs=output_folder, outputs=use_custom_output)
         refresh_files_btn.click(fn=list_files, inputs=[manual_path, use_custom_output, output_folder], outputs=[files_to_delete, del_status])
         del_selected_btn.click(fn=delete_selected, inputs=[files_to_delete, manual_path, use_custom_output, output_folder], outputs=[files_to_delete, del_status])
         del_all_btn.click(fn=delete_all, inputs=[manual_path, use_custom_output, output_folder], outputs=[files_to_delete, del_status])
@@ -1048,13 +1202,13 @@ def build_app():
         # 🚀 Вызов умных функций, которые сами выберут откуда взять путь к файлу
         copy_srt_btn.click(
             fn=smart_copy_srt,
-            inputs=[hidden_srt_paths, srt_local_path],
+            inputs=[hidden_srt_paths, source_documents],
             outputs=[translate_status]
         )
         
         save_srt_btn.click(
             fn=smart_save_srt,
-            inputs=[hidden_srt_paths, srt_local_path, hidden_actual_out_dir],
+            inputs=[hidden_srt_paths, source_documents, hidden_actual_out_dir],
             outputs=[translate_status]
         )
 
@@ -1079,7 +1233,8 @@ def build_app():
             no_speech_thresh, use_sentence, use_print_progress,
             use_beep_off, use_custom_output, output_folder,
             plain_text_output,
-            skip_done_checkbox, use_study_deck, study_min_count, study_max_terms
+            skip_done_checkbox, use_study_deck, study_min_count, study_max_terms,
+            shutdown_checkbox, power_mode
         ]
 
         check_api_btn.click(
@@ -1088,74 +1243,56 @@ def build_app():
             outputs=[translate_status]
         )
 
-        def maybe_auto_open(enabled, manual_path_val, use_custom, custom_dir, actual_dir):
-            """Open the results folder right after a run finishes (if enabled)."""
-            if not enabled:
-                return
-            target = actual_dir if actual_dir and os.path.isdir(actual_dir) else ""
-            if not target:
-                from utils import get_actual_output_dir
-                target = get_actual_output_dir(manual_path_val, use_custom, custom_dir)
-            if target and os.path.isdir(target):
-                try:
-                    import subprocess as _sp
-                    _sp.Popen(["explorer", target], shell=True)
-                    gr.Info("Output folder opened: " + target)
-                except Exception as _e:
-                    gr.Warning("Could not open output folder: " + str(_e))
-
-
-
-        start_btn.click(fn=prepare_start, inputs=all_settings_inputs, outputs=log_box).then(
+        start_btn.click(fn=prepare_start, inputs=all_settings_inputs, outputs=log_box).success(
             fn=run_transcription,
             inputs=whisper_inputs,
             outputs=[clean_text_output, hidden_dl_files, log_box, hidden_srt_paths, srt_local_path, hidden_actual_out_dir] 
-        ).then(
-            fn=maybe_auto_open,
-            inputs=[auto_open_output, manual_path, use_custom_output, output_folder, hidden_actual_out_dir],
-            queue=False,
+        ).success(
+            fn=finish_run,
+            inputs=[auto_open_output, manual_path, use_custom_output, output_folder, hidden_actual_out_dir, hidden_dl_files],
+            outputs=hidden_actual_out_dir,
         )
 
-        start_full_btn.click(fn=prepare_start, inputs=all_settings_inputs, outputs=log_box).then(
+        start_full_btn.click(fn=prepare_start, inputs=all_settings_inputs, outputs=log_box).success(
             fn=run_transcription,
             inputs=whisper_inputs,
             outputs=[clean_text_output, hidden_dl_files, log_box, hidden_srt_paths, srt_local_path, hidden_actual_out_dir] 
-        ).then(
+        ).success(
             fn=lambda: "SUBTITLES READY! Starting automatic translation...", outputs=translate_status
-        ).then(
+        ).success(
             fn=translate_content, 
             inputs=[
                 api_provider, api_key_input, target_languages, api_model, 
-                sys_prompt, custom_srt, srt_local_path, hidden_actual_out_dir, 
+                sys_prompt, custom_srt, source_documents, hidden_actual_out_dir,
                 hidden_srt_paths, translate_mode, clean_text_output, force_all_langs,
-                language, plain_text_output
+                language, plain_text_output, use_custom_output, output_folder
             ], 
             outputs=[translate_status, clean_text_output, hidden_srt_paths]
-        ).then(
-            fn=maybe_auto_open,
-            inputs=[auto_open_output, manual_path, use_custom_output, output_folder, hidden_actual_out_dir],
-            queue=False,
+        ).success(
+            fn=partial(finish_run, translation=True),
+            inputs=[auto_open_output, manual_path, use_custom_output, output_folder, hidden_actual_out_dir, hidden_srt_paths, translate_status],
+            outputs=hidden_actual_out_dir,
         )
         
-        translate_btn.click(fn=prepare_start, inputs=all_settings_inputs, outputs=log_box).then(
+        translate_btn.click(fn=prepare_start, inputs=all_settings_inputs, outputs=log_box).success(
             fn=translate_content, 
             inputs=[
                 api_provider, api_key_input, target_languages, api_model, 
-                sys_prompt, custom_srt, srt_local_path, hidden_actual_out_dir, 
+                sys_prompt, custom_srt, source_documents, hidden_actual_out_dir,
                 hidden_srt_paths, translate_mode, clean_text_output, force_all_langs,
-                language, plain_text_output
+                language, plain_text_output, use_custom_output, output_folder
             ], 
             outputs=[translate_status, clean_text_output, hidden_srt_paths]
-        ).then(
-            fn=maybe_auto_open,
-            inputs=[auto_open_output, manual_path, use_custom_output, output_folder, hidden_actual_out_dir],
-            queue=False,
+        ).success(
+            fn=partial(finish_run, translation=True),
+            inputs=[auto_open_output, manual_path, use_custom_output, output_folder, hidden_actual_out_dir, hidden_srt_paths, translate_status],
+            outputs=hidden_actual_out_dir,
         )
 
         export_json_btn.click(
             fn=export_to_json_dict, 
             inputs=[
-                srt_local_path, custom_srt, clean_text_output, 
+                source_documents, custom_srt, clean_text_output,
                 hidden_actual_out_dir, hidden_srt_paths
             ], 
             outputs=[export_json_status, hidden_dl_files, clean_text_output]
@@ -1170,8 +1307,10 @@ def build_app():
             from utils import get_actual_output_dir
             out_dir = get_actual_output_dir(manual_path_val, use_custom, custom_dir)
             if os.path.isdir(out_dir):
-                import subprocess as _sp
-                _sp.Popen(["explorer", out_dir], shell=True)
+                try:
+                    open_output_folder(out_dir)
+                except Exception as e:
+                    gr.Warning("Could not open output folder: " + str(e))
 
         def on_output_size(manual_path_val, use_custom, custom_dir):
             from utils import get_actual_output_dir
@@ -1224,8 +1363,10 @@ def build_app():
                 batch_queue.enable_shutdown()
                 gr.Info("Windows will sleep 60s after the batch." if _power_key(mode) == "sleep" else "Windows will shut down 60s after the batch.")
             else:
-                batch_queue.disable_shutdown()
-            return gr.update(visible=checked)
+                message = batch_queue.disable_shutdown()
+                if batch_queue.is_shutdown_scheduled():
+                    gr.Warning(message)
+            return gr.update(visible=checked or batch_queue.is_shutdown_scheduled())
 
         def on_power_mode_change(mode: str, checked: bool):
             batch_queue.set_power_action(_power_key(mode))
@@ -1235,11 +1376,13 @@ def build_app():
         def on_cancel_shutdown():
             msg = batch_queue.cancel_shutdown()
             gr.Info(msg)
+            if batch_queue.is_shutdown_scheduled():
+                return gr.update(), gr.update(visible=True)
             return gr.update(value=False), gr.update(visible=False)
 
-        shutdown_checkbox.change(fn=on_shutdown_toggle, inputs=[shutdown_checkbox, power_mode], outputs=[cancel_shutdown_btn])
-        power_mode.change(fn=on_power_mode_change, inputs=[power_mode, shutdown_checkbox])
-        cancel_shutdown_btn.click(fn=on_cancel_shutdown, outputs=[shutdown_checkbox, cancel_shutdown_btn])
+        shutdown_checkbox.change(fn=on_shutdown_toggle, inputs=[shutdown_checkbox, power_mode], outputs=[cancel_shutdown_btn], queue=False)
+        power_mode.change(fn=on_power_mode_change, inputs=[power_mode, shutdown_checkbox], queue=False)
+        cancel_shutdown_btn.click(fn=on_cancel_shutdown, outputs=[shutdown_checkbox, cancel_shutdown_btn], queue=False)
 
         def on_join_click(manual_path_val, use_custom, custom_dir, plain_text):
             from utils import get_actual_output_dir
@@ -1302,6 +1445,6 @@ def build_app():
                    outputs=[output_size_label])
 
         # Restore theme class on page load (theme toggle removed, this is a no-op kept for compatibility)
-        app.load(fn=lambda theme: theme, inputs=[theme_state], outputs=[theme_state])
+        app.load(fn=lambda theme: theme, inputs=[theme_state], outputs=[theme_state], js=_SMART_SOURCE_JS)
 
     return app

@@ -14,61 +14,64 @@ from config import DEFAULT_OUTPUT_DIR
 # ==============================================================================
 # 9. СИСТЕМНЫЕ УТИЛИТЫ И АВТО-ОЧИСТИТЕЛЬ (SANITIZER) (часть функций)
 # ==============================================================================
-def chunk_text(text: str, chunk_size: int, by_paragraphs: bool = False) -> List[List[str]]:
+def chunk_text(text: str, chunk_size: int, by_paragraphs: bool = False,
+               max_chars: int = 0) -> List[List[str]]:
+    """Batch whole subtitle cues, never separate an index from its timestamp.
+
+    Character limits are soft for a single oversized cue: it stays intact.
+    Existing paragraph callers retain their original count-based behavior.
+    """
+    if chunk_size < 1:
+        raise ValueError('chunk_size must be positive')
+    normalized = text.replace('\r\n', '\n').replace('\r', '\n').strip('\ufeff\n ')
+    if not normalized:
+        return []
     if by_paragraphs:
-        blocks = text.strip().split('\n\n')
+        blocks = re.split(r'\n\s*\n', normalized)
     else:
-        blocks = text.strip().split('\n') # Для SRT, где каждый блок - это строка субтитров
-        
-    # Удаляем пустые строки/блоки, которые могли появиться из-за split
-    blocks = [block for block in blocks if block.strip()]
-
-    # Собираем блоки в чанки, стараясь не разбивать SRT-блоки (номер, таймкод, текст)
-    # Для SRT-режима, chunk_size - это количество *полных* SRT-блоков.
-    # Для обычного текста, chunk_size - это количество абзацев/строк.
-
-    if by_paragraphs:
-        # Если режим по абзацам (для обычного текста), просто делим список абзацев
-        return [blocks[i:i + chunk_size] for i in range(0, len(blocks), chunk_size)]
-    else:
-        # Для SRT-режима, мы предполагаем, что text уже представляет собой последовательность SRT-блоков,
-        # разделённых \n\n. Функция sanitize_srt_text уже убирает мусор. 
-        # Здесь просто делим полученные блоки на части.
-        # Каждый элемент в `blocks` уже является полным SRT-блоком (или его частью до \n\n)
-        chunks = []
-        current_chunk = []
-        srt_block_pattern = re.compile(r'^\d+$|^\d{2}:\d{2}:\d{2}[,\.]\d{3}\s*-->\s*\d{2}:\d{2}:\d{2}[,\.]\d{3}$')
-
-        temp_blocks = []
-        current_srt_block_lines = []
-        block_num = 0
-
-        # Пересобираем в логические SRT-блоки, чтобы не разбивать их
-        for line in blocks:
-            if srt_block_pattern.match(line):
-                # Если это номер блока или таймкод, значит, мы начинаем новый SRT-блок
-                if current_srt_block_lines:
-                    temp_blocks.append('\n'.join(current_srt_block_lines))
-                    current_srt_block_lines = []
-                current_srt_block_lines.append(line)
-                if line.isdigit(): # Это номер блока, увеличиваем счетчик
-                    block_num = int(line)
-            elif line.strip(): # Это строка текста, добавляем к текущему SRT-блоку
-                current_srt_block_lines.append(line)
-
-        if current_srt_block_lines:
-            temp_blocks.append('\n'.join(current_srt_block_lines))
-
-        # Теперь temp_blocks содержит целые SRT-блоки, которые можно делить по chunk_size
-        for i in range(0, len(temp_blocks), chunk_size):
-            chunks.append(temp_blocks[i:i + chunk_size])
-
-        return chunks
+        boundary = r'(?m)(?=^\d+\s*\n\d{2,}:\d{2}:\d{2}[,.]\d{3}\s*-->)'
+        blocks = re.split(boundary, normalized)
+    blocks = [block.strip() for block in blocks if block.strip()]
+    chunks, current, length = [], [], 0
+    for block in blocks:
+        added = len(block) + (2 if current else 0)
+        if current and (len(current) >= chunk_size or (max_chars > 0 and length + added > max_chars)):
+            chunks.append(current)
+            current, length = [], 0
+        length += len(block) + (2 if current else 0)
+        current.append(block)
+    if current:
+        chunks.append(current)
+    return chunks
 
 
 # ==============================================================================
 # 11. БРОНЕБОЙНЫЙ ПАРСЕР И ЭКСТРАКТОР (JSON + CSV EXPORT)
 # ==============================================================================
+def validate_srt_translation(original: str, translated: str) -> str:
+    """Require complete cues with unchanged IDs and timestamps before saving."""
+    translated = re.sub(r'^```(?:srt)?\s*\n(.*?)\n```\s*$', r'\1',
+                        translated.strip(), flags=re.DOTALL | re.IGNORECASE)
+
+    def structure(text):
+        cues = [cue for batch in chunk_text(text, 1) for cue in batch]
+        if not cues:
+            raise ValueError('Subtitle response contains no cues')
+        identities = []
+        pattern = (r'(\d+)\n(\d{2,}:\d{2}:\d{2}[,.]\d{3})\s*-->\s*'
+                   r'(\d{2,}:\d{2}:\d{2}[,.]\d{3})\n(.+)')
+        for cue in cues:
+            match = re.fullmatch(pattern, cue, flags=re.DOTALL)
+            if not match or not match.group(4).strip():
+                raise ValueError('Subtitle response contains an incomplete cue')
+            identities.append(tuple(value.replace('.', ',') for value in match.group(1, 2, 3)))
+        return identities
+
+    if structure(original) != structure(translated):
+        raise ValueError('Subtitle response changed or omitted cue IDs/timestamps')
+    return translated.replace('\r\n', '\n').replace('\r', '\n').lstrip('\ufeff').strip()
+
+
 def robust_parse_srt(content: str, lang_key: str, dict_data: dict, is_srt: bool = True) -> None:
     if is_srt:
         content = sanitize_srt_text(content)

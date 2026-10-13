@@ -478,13 +478,35 @@ body.katav-light #output_size_box textarea,body.katav-light #output_size_box inp
 .btn-clear:focus-visible,.btn-danger-strong:focus-visible{outline:2px solid #dda3ae !important;outline-offset:2px !important}
 body.katav-light .btn-clear,body.katav-light .btn-danger-strong{background:linear-gradient(180deg,#f0cdd4 0%,#deacb6 100%) !important;border-color:#c07f8d !important;color:#43222a !important;box-shadow:0 0 0 1px rgba(192,127,141,.3) !important}
 
-/* ===== KATAV v5: START and CLEAR share one exact palette by ID ===== */
+/* ===== Primary actions ===== */
 #start_btn,#start_full_btn,#clear_media_btn,#clear_trans_files_btn,.btn-clear,.btn-danger-strong{background:linear-gradient(180deg,#48678c 0%,#3c5675 100%) !important;border:1px solid #587aa1 !important;color:#e9f0f7 !important;text-shadow:0 1px 2px rgba(0,0,0,.5) !important;box-shadow:inset 0 1px 0 rgba(255,255,255,.2),inset 0 0 10px rgba(0,0,0,.2),0 3px 6px rgba(0,0,0,.4) !important;font-weight:600 !important;letter-spacing:.4px !important}
 #start_btn:hover,#start_full_btn:hover,#clear_media_btn:hover,#clear_trans_files_btn:hover,.btn-clear:hover,.btn-danger-strong:hover{background:linear-gradient(180deg,#53749c 0%,#446184 100%) !important;border-color:#6b8cb2 !important;color:#e9f0f7 !important;box-shadow:inset 0 1px 0 rgba(255,255,255,.3),0 5px 10px rgba(234,88,12,.4) !important;transform:translateY(-1px) !important}
 #start_btn:active,#start_full_btn:active,#clear_media_btn:active,#clear_trans_files_btn:active,.btn-clear:active,.btn-danger-strong:active{transform:translateY(1px) !important;box-shadow:none !important}
 #start_btn:focus-visible,#start_full_btn:focus-visible,#clear_media_btn:focus-visible,#clear_trans_files_btn:focus-visible,.btn-clear:focus-visible,.btn-danger-strong:focus-visible{outline:2px solid #7d9dc4 !important;outline-offset:2px !important}
 body.katav-light #start_btn,body.katav-light #start_full_btn,body.katav-light #clear_media_btn,body.katav-light #clear_trans_files_btn,body.katav-light .btn-clear,body.katav-light .btn-danger-strong{background:linear-gradient(180deg,#ccd9e9 0%,#b6c8de 100%) !important;border-color:#9db3cf !important;color:#26374a !important}
 body.katav-light #start_btn:hover,body.katav-light #start_full_btn:hover,body.katav-light #clear_media_btn:hover,body.katav-light #clear_trans_files_btn:hover,body.katav-light .btn-clear:hover,body.katav-light .btn-danger-strong:hover{background:linear-gradient(180deg,#ccd9e9 0%,#b6c8de 100%) !important;border-color:#9db3cf !important;color:#26374a !important}
+
+/* CLEAR is deliberately brown; leave START and destructive actions unchanged. */
+#clear_media_btn,#clear_trans_files_btn{background:linear-gradient(180deg,#865735,#684126) !important;border-color:#ba8659 !important;color:#fff5eb !important;font-weight:700 !important}
+#clear_media_btn:hover,#clear_trans_files_btn:hover{background:linear-gradient(180deg,#9a6741,#794d2e) !important;border-color:#d5a374 !important;color:#fff5eb !important}
+#clear_media_btn:focus-visible,#clear_trans_files_btn:focus-visible{outline:2px solid #e9b987 !important;outline-offset:3px !important}
+#clear_media_btn:active,#clear_trans_files_btn:active{background:#684126 !important;transform:translateY(1px) !important}
+body.katav-light #clear_media_btn,body.katav-light #clear_trans_files_btn{background:linear-gradient(180deg,#865735,#684126) !important;border-color:#ba8659 !important;color:#fff5eb !important}
+body.katav-light #clear_media_btn:hover,body.katav-light #clear_trans_files_btn:hover{background:linear-gradient(180deg,#9a6741,#794d2e) !important;border-color:#d5a374 !important;color:#fff5eb !important}
+.katav-inline-row .katav-switch{min-width:210px !important;flex:1 1 210px !important}
+.katav-switch label>span{white-space:normal !important;overflow:visible !important;text-overflow:clip !important}
+#smart_source_area{border:1px dashed #59616d !important;border-radius:8px !important;background:#262629 !important;padding:0 !important;overflow:hidden !important}
+#smart_source_area #smart_dropzone{border:0 !important;background:transparent !important}
+#source_names{margin:0 !important;padding:0 12px 8px !important;border:0 !important;background:transparent !important}
+#source_names:empty{display:none !important}
+.source-name-list{max-height:180px;overflow-y:auto;padding:4px 0}
+.source-name-row{display:flex;align-items:center;gap:10px;padding:8px 10px;margin:4px 0;background:#1c2431;border:1px solid #455267;border-radius:6px}
+.source-kind{flex:none;font:600 10px sans-serif;color:#c5ddff;background:#304866;border-radius:4px;padding:4px 6px}
+.source-name{min-width:0;overflow-wrap:anywhere;color:#edf2f7;font-size:14px;line-height:1.4}
+.source-open-button{background:transparent !important;border:0 !important;text-align:left !important;padding:2px 0 !important;cursor:pointer !important;text-decoration:underline;text-underline-offset:3px}
+.source-open-button:hover{color:#a9d4ff !important}
+.source-open-button:focus-visible{outline:2px solid #a9d4ff !important;outline-offset:3px}
+#source_open_request{display:none !important}
 """
 
 # ==============================================================================
@@ -571,6 +593,37 @@ import os as _os_cp
 import json as _json_cp
 
 CUSTOM_PROVIDERS_FILE = _os_cp.path.join(_os_cp.path.dirname(_os_cp.path.abspath(__file__)), "custom_providers.json")
+BUILTIN_PROVIDERS = ("Local Proxy (127.0.0.1)", "OmniRoute", "Freeway", "Mistral", "Google Studio (Gemma 4)", "Groq (OSS 120b)", "OpenRouter", "Google Gemini")
+
+
+def validate_provider_url(base_url):
+    from urllib.parse import urlsplit
+    url = str(base_url or "").strip().rstrip("/")
+    try:
+        parsed = urlsplit(url)
+        port = parsed.port
+    except ValueError:
+        raise ValueError("Invalid base URL or port.") from None
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise ValueError("Base URL must be an http(s) API root, for example http://127.0.0.1:1234/v1")
+    if parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise ValueError("Keep credentials in API KEY; base URL must not contain credentials, query, or fragment.")
+    if parsed.path.rstrip('/').endswith(('/chat/completions', '/models', '/messages')):
+        raise ValueError("Use the API root (for example /v1), not a models or completion endpoint.")
+    return url
+
+
+def _write_custom_providers(data):
+    """Atomic replacement keeps a failed write from truncating saved credentials."""
+    import tempfile
+    fd, temporary = tempfile.mkstemp(prefix='.providers-', suffix='.tmp', dir=_os_cp.path.dirname(CUSTOM_PROVIDERS_FILE))
+    try:
+        with _os_cp.fdopen(fd, 'w', encoding='utf-8') as fh:
+            _json_cp.dump(data, fh, indent=4, ensure_ascii=False)
+        _os_cp.replace(temporary, CUSTOM_PROVIDERS_FILE)
+    finally:
+        if _os_cp.path.exists(temporary):
+            _os_cp.unlink(temporary)
 
 
 def load_custom_providers() -> dict:
@@ -598,20 +651,24 @@ def get_custom_provider(name):
 
 def save_custom_provider(name, base_url, api_key="", models=None) -> dict:
     key = str(name or "").strip()
-    url = str(base_url or "").strip().rstrip("/")
+    url = validate_provider_url(base_url)
     if not key:
         raise ValueError("Provider name is required.")
+    if key.casefold() in {name.casefold() for name in BUILTIN_PROVIDERS}:
+        raise ValueError("Choose a custom name distinct from built-in providers.")
+    if len(key) > 80 or any(ord(char) < 32 for char in key):
+        raise ValueError("Provider name must be 1–80 printable characters.")
     if not url:
         raise ValueError("Base URL is required, for example http://127.0.0.1:1234/v1")
     data = load_custom_providers()
+    key = next((name for name in data if name.casefold() == key.casefold()), key)
     existing = data.get(key, {})
     data[key] = {
         "base_url": url,
         "api_key": api_key if api_key else existing.get("api_key", ""),
-        "models": list(models) if models else existing.get("models", []),
+        "models": list(dict.fromkeys(str(model).strip() for model in models if str(model).strip())) if models is not None else existing.get("models", []),
     }
-    with open(CUSTOM_PROVIDERS_FILE, "w", encoding="utf-8") as fh:
-        _json_cp.dump(data, fh, indent=4, ensure_ascii=False)
+    _write_custom_providers(data)
     return data[key]
 
 
@@ -621,6 +678,5 @@ def delete_custom_provider(name) -> bool:
     if key not in data:
         return False
     data.pop(key, None)
-    with open(CUSTOM_PROVIDERS_FILE, "w", encoding="utf-8") as fh:
-        _json_cp.dump(data, fh, indent=4, ensure_ascii=False)
+    _write_custom_providers(data)
     return True

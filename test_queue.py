@@ -204,7 +204,9 @@ def test_shutdown_eligibility():
         check("Shutdown command is 'shutdown /s /t 60'", list(args[0]) == ["shutdown", "/s", "/t", "60"])
 
     # Cancel shutdown
-    qm.disable_shutdown()
+    with patch("queue_manager.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        qm.disable_shutdown()
     check("Shutdown disabled", not qm.is_shutdown_enabled())
 
 

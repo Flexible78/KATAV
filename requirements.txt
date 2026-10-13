@@ -13,7 +13,7 @@ openai>=1.0                   # OpenRouter, Google Studio, OmniRoute, Freeway, M
 groq>=0.11                    # Groq
 
 # --- Optional: extra features ---
-yt-dlp>=2024.4.9              # Download audio from URLs (YouTube, VK, TikTok)
+yt-dlp[default]>=2026.8.19    # YouTube fixes and packaged JS challenge solver; Node.js/Deno also required
 gdown==5.2.0                  # Download publicly shared Google Drive files
 google-auth-oauthlib>=1.0     # Google Drive OAuth installed-app flow
 google-auth-httplib2>=0.2    # Google Drive OAuth transport

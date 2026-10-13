@@ -152,6 +152,7 @@ class QueueManager:
         # Power action performed after the batch: shutdown or sleep
         self._power_action: str = "shutdown"
         self._sleep_timer = None
+        self._power_generation = 0
 
         # Settings snapshots — keyed by item idx
         self._settings_snapshots: Dict[int, Dict[str, Any]] = {}
@@ -176,6 +177,9 @@ class QueueManager:
 
     def reset(self):
         """Clear the entire queue and reset state for a fresh batch."""
+        message = self.cancel_shutdown()
+        if self.is_shutdown_scheduled():
+            raise RuntimeError(message)
         with self._lock:
             # Cancel any pending futures
             for fut in self._pending_futures:
@@ -668,12 +672,15 @@ class QueueManager:
     def enable_shutdown(self):
         with self._lock:
             self._shutdown_requested = True
+            self._shutdown_cancelled = False
+            if not self._shutdown_scheduled:
+                self._shutdown_message = ""
 
     def disable_shutdown(self):
+        message = self.cancel_shutdown()
         with self._lock:
             self._shutdown_requested = False
-            self._shutdown_scheduled = False
-            self._shutdown_cancelled = True
+        return message
 
     def is_shutdown_enabled(self) -> bool:
         with self._lock:
@@ -682,24 +689,37 @@ class QueueManager:
     def set_power_action(self, action: str) -> None:
         value = "sleep" if str(action or "").strip().lower().startswith("sleep") else "shutdown"
         with self._lock:
+            changing_pending = self._shutdown_scheduled and self._power_action != value
+        if changing_pending:
+            message = self.cancel_shutdown()
+            if self.is_shutdown_scheduled():
+                raise RuntimeError(message)
+        with self._lock:
             self._power_action = value
 
     def get_power_action(self) -> str:
         with self._lock:
             return self._power_action
 
-    def _suspend_now(self) -> None:
-        try:
-            subprocess.run(
-                ["rundll32.exe", "powrprof.dll,SetSuspendState", "0,1,0"],
-                capture_output=True, text=True, timeout=30,
-                creationflags=0x08000000 if os.name == "nt" else 0,
-            )
-            log.info("[POWER] Sleep command sent.")
-        except Exception as e:
-            log.error("[POWER] Sleep failed: %s", e)
+    def _suspend_now(self, generation: int) -> None:
+        with self._lock:
+            if (generation != self._power_generation or not self._shutdown_scheduled
+                    or not self._shutdown_requested or self._shutdown_cancelled
+                    or self._cancelled or utils.stop_requested or self._power_action != "sleep"):
+                return
+            self._sleep_timer = None
+            self._shutdown_scheduled = False
+            self._shutdown_requested = False
+            try:
+                utils.suspend_windows()
+                self._shutdown_message = "Windows sleep request completed."
+                log.info("[POWER] %s", self._shutdown_message)
+            except Exception as e:
+                self._shutdown_message = "Sleep failed: %s" % e
+                log.error("[POWER] %s", self._shutdown_message)
+            utils.log_queue.put("[POWER] " + self._shutdown_message + "\n")
 
-    def check_and_schedule_shutdown(self) -> str:
+    def check_and_schedule_shutdown(self, successful_run: Optional[bool] = None) -> str:
         """
         Check if shutdown should be triggered. Returns a message string.
         Called after batch processing completes.
@@ -711,14 +731,20 @@ class QueueManager:
             if self._shutdown_cancelled:
                 return "Shutdown cancelled."
 
+            if self._shutdown_scheduled:
+                return self._shutdown_message
+
             # Must have at least one success
             done = sum(1 for it in self._items if it.status == "done")
-            if done == 0:
+            if successful_run is False or (successful_run is None and done == 0):
                 self._shutdown_requested = False
                 return "⚠️ No items succeeded — shutdown skipped."
 
+            if successful_run is None and any(it.status in ("queued", "running") for it in self._items):
+                return "⚠️ Batch is still running — power action deferred."
+
             # Must not be cancelled
-            if self._cancelled:
+            if self._cancelled or utils.stop_requested:
                 self._shutdown_requested = False
                 return "⚠️ Batch was cancelled — shutdown skipped."
 
@@ -727,15 +753,18 @@ class QueueManager:
                 try:
                     if self._sleep_timer is not None:
                         self._sleep_timer.cancel()
-                    timer = threading.Timer(60.0, self._suspend_now)
+                    self._power_generation += 1
+                    timer = threading.Timer(60.0, self._suspend_now, args=(self._power_generation,))
                     timer.daemon = True
-                    timer.start()
                     self._sleep_timer = timer
                     self._shutdown_scheduled = True
                     self._shutdown_message = "Batch complete. Windows will go to sleep in 60 seconds."
+                    timer.start()
                     log.info("[POWER] Sleep scheduled in 60s.")
                     return self._shutdown_message
                 except Exception as e:
+                    self._shutdown_scheduled = False
+                    self._sleep_timer = None
                     self._shutdown_message = "Sleep scheduling failed: %s" % e
                     log.error(self._shutdown_message)
                     return self._shutdown_message
@@ -762,6 +791,7 @@ class QueueManager:
     def cancel_shutdown(self) -> str:
         """Cancel pending shutdown. Returns status message."""
         with self._lock:
+            self._power_generation += 1
             if self._sleep_timer is not None:
                 try:
                     self._sleep_timer.cancel()
@@ -774,15 +804,24 @@ class QueueManager:
                 self._shutdown_message = "Sleep cancelled."
                 log.info("[POWER] Sleep cancelled.")
                 return self._shutdown_message
+            if not self._shutdown_scheduled:
+                self._shutdown_requested = False
+                self._shutdown_cancelled = True
+                return "No pending power action."
             try:
-                subprocess.run(
+                result = subprocess.run(
                     ["shutdown", "/a"],
                     capture_output=True, text=True, timeout=10,
                     creationflags=0x08000000 if os.name == "nt" else 0,
                 )
+                if result.returncode != 0:
+                    self._shutdown_message = "Failed to cancel shutdown: " + (result.stderr or result.stdout or "unknown error").strip()
+                    return self._shutdown_message
                 self._shutdown_scheduled = False
+                self._shutdown_requested = False
                 self._shutdown_cancelled = True
-                return "Shutdown cancelled."
+                self._shutdown_message = "Shutdown cancelled."
+                return self._shutdown_message
             except Exception as e:
                 return f"Failed to cancel shutdown: {e}"
 

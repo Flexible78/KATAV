@@ -6,6 +6,9 @@ from typing import Dict, Any
 # Импортируем SETTINGS_FILE из config.py
 from config import SETTINGS_FILE, TARGET_LANGUAGE_CODE_MAP, TARGET_LANGUAGES
 
+# Sources belong to the current session, not application preferences.
+TRANSIENT_SOURCE_KEYS = frozenset({"whisper_manual_path", "whisper_urls", "trans_srt_path"})
+
 # ==============================================================================
 # 5. МЕНЕДЖЕР СОСТОЯНИЙ ИНТЕРФЕЙСА (АВТОСОХРАНЕНИЕ)
 # ==============================================================================
@@ -53,6 +56,18 @@ class UIStateManager:
         else:
             settings = {}
 
+        if not isinstance(settings, dict):
+            settings = {}
+        had_sources = any(key in settings for key in TRANSIENT_SOURCE_KEYS)
+        for key in TRANSIENT_SOURCE_KEYS:
+            settings.pop(key, None)
+        if had_sources:
+            try:
+                with open(self.filepath, 'w', encoding='utf-8') as f:
+                    json.dump(settings, f, indent=4, ensure_ascii=False)
+            except OSError:
+                logging.warning("Could not remove legacy source history from settings.")
+
         # ── Migrate legacy language display labels to stable codes ──
         raw_langs = settings.get("trans_langs")
         if isinstance(raw_langs, list):
@@ -69,7 +84,10 @@ class UIStateManager:
         return settings
 
     def save_settings(self, new_settings: Dict[str, Any]) -> None:
-        self.settings.update(new_settings)
+        self.settings.update({key: value for key, value in new_settings.items()
+                              if key not in TRANSIENT_SOURCE_KEYS})
+        for key in TRANSIENT_SOURCE_KEYS:
+            self.settings.pop(key, None)
         try:
             with open(self.filepath, 'w', encoding='utf-8') as f:
                 json.dump(self.settings, f, indent=4, ensure_ascii=False)
@@ -77,6 +95,8 @@ class UIStateManager:
             pass
 
     def get(self, key: str, default: Any = None) -> Any:
+        if key in TRANSIENT_SOURCE_KEYS:
+            return default
         return self.settings.get(key, default)
 
 

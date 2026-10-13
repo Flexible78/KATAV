@@ -34,6 +34,44 @@ def read_clipboard_text() -> str:
     return ""
 
 
+def read_clipboard_sources() -> dict:
+    """Return {'files': [...], 'text': str} from the Windows clipboard.
+
+    Uses one STA PowerShell call without the user profile and forces UTF-8 output,
+    so Unicode file names survive and profile output cannot pollute the result.
+    File drop lists take priority over text.
+    """
+    import json
+    empty = {"files": [], "text": ""}
+    if os.name != "nt":
+        return empty
+    script = (
+        "$ErrorActionPreference='SilentlyContinue';"
+        "[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false);"
+        "Add-Type -AssemblyName System.Windows.Forms;"
+        "$files=@([Windows.Forms.Clipboard]::GetFileDropList() | ForEach-Object { [string]$_ });"
+        "$text='';"
+        "if (-not $files.Count -and [Windows.Forms.Clipboard]::ContainsText()) { $text=[Windows.Forms.Clipboard]::GetText() };"
+        "ConvertTo-Json -Compress -InputObject @{files=$files; text=$text}"
+    )
+    try:
+        completed = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-STA", "-Command", script],
+            capture_output=True, timeout=5, creationflags=0x08000000,
+        )
+        lines = [line for line in completed.stdout.decode("utf-8", errors="replace").splitlines() if line.strip()]
+        data = json.loads(lines[-1]) if lines else {}
+    except Exception as error:
+        logging.warning("[CLIPBOARD] read failed: %s", type(error).__name__)
+        return empty
+    files = data.get("files") or []
+    if isinstance(files, str):
+        files = [files]
+    files = [str(path) for path in files if str(path).strip() and os.path.exists(str(path))]
+    text = data.get("text") or ""
+    return {"files": files, "text": text if isinstance(text, str) else ""}
+
+
 def read_clipboard_paths() -> str:
     paths = []
     

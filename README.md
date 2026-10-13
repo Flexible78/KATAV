@@ -26,7 +26,7 @@ KATAV is a local-first Windows toolkit for speech recognition. Audio and video t
 - **Per-provider model memory** — the last working model for each provider is remembered automatically.
 - **Dynamic model lists** — fetch the list of available models directly from each provider with the refresh button.
 - **Batch processing** — transcribe multiple files in one run, with an optional cooldown pause between files to manage GPU temperature.
-- **Google Drive support** — download private Google Drive files after OAuth sign-in; public shared links work without authentication.
+- **Google Drive support** — add public shared links. The confusing Google sign-in panel has been removed; for private files, download them through your authorized browser and add the local file.
 - **Browser UI** — a Gradio-based web interface runs locally on your machine.
 
 ## UI options
@@ -50,7 +50,7 @@ KATAV is a local-first Windows toolkit for speech recognition. Audio and video t
 
 - **Local files**: any common audio/video format (`mp3`, `wav`, `mp4`, `mkv`, etc.).
 - **YouTube**: single videos, playlists, and Shorts.
-- **Google Drive**: public shared links and private files after OAuth sign-in.
+- **Google Drive**: public shared links; add private files locally after downloading them through your authorized browser.
 - **Spotify**: **not supported**. Spotify audio is DRM-protected and cannot be downloaded. For podcasts, use the RSS feed or the same episode on YouTube.
 
 ## Requirements
@@ -58,6 +58,7 @@ KATAV is a local-first Windows toolkit for speech recognition. Audio and video t
 - **Windows 10/11 64-bit**
 - **Python 3.10+**
 - **NVIDIA GPU recommended** (CPU-only mode is supported but slower)
+- **Node.js 20+ or Deno** for YouTube's JavaScript challenges, plus `yt-dlp[default]` from `requirements.txt` and FFmpeg for audio conversion.
 - **[Faster-Whisper-XXL](https://github.com/Purfview/whisper-faster-XXL)** downloaded separately — KATAV shells out to `faster-whisper-xxl.exe`
 
 ## Quick start
@@ -83,17 +84,25 @@ For a step-by-step guide on transcribing, translating, and extracting vocabulary
 
 This repository contains **no API keys, no personal paths, no media files, and no transcripts**. All credentials are read from a local, gitignored `whisper_api_keys.json` file that you create on your own machine from the provided `whisper_api_keys.example.json` template. The local Whisper executable path is resolved from an environment variable, a local `whisper_settings.json` file, or autodiscovery — never hardcoded.
 
-## Google Drive OAuth
+## Google Drive
 
-To transcribe private Google Drive files, sign in through the app:
-
-1. Create a Desktop OAuth client in [Google Cloud Console](https://console.cloud.google.com/), enable the Drive API, and download the JSON secret.
-2. Rename the downloaded file to `google_client_secret.json` and place it next to `main.py`.
-3. Click **SIGN IN TO GOOGLE** in the app and grant read-only access.
-
-See [docs/SETUP.md](docs/SETUP.md) for the full walkthrough.
+Public shared links remain supported. The Google sign-in panel is no longer exposed in the UI; the underlying integration is retained for compatibility. For private files, download them through your authorized browser and add the local file to **SOURCES**.
 
 ## Troubleshooting
+
+### YouTube download fails with HTTP 403
+
+Update the downloader and its packaged JavaScript challenge solver in the same Python environment used to launch KATAV:
+
+```powershell
+.venv\Scripts\python.exe -m pip install --upgrade "yt-dlp[default]"
+```
+
+Install Node.js 20+ or Deno and ensure it is available on `PATH`. KATAV explicitly enables the installed runtime. The reported video was verified to download fully with yt-dlp 2026.08.19, its default dependencies, and Node.js; its previous 2026.07.04 installation returned HTTP 403. This is not a guarantee for private, restricted, or subsequently changed videos. Failed downloads stay failed and cannot trigger automatic power actions.
+
+### Whisper exits with `0xC0000409` after writing results
+
+This native-engine failure is not fixed by the YouTube downloader update. KATAV can preserve fresh, validated SRT/TXT files after the recognized completion marker, but still reports the item as failed and disables automatic sleep/shutdown. Recovery is not a successful engine exit.
 
 ### `faster-whisper-xxl.exe` was not found
 
@@ -129,13 +138,20 @@ All rights reserved. See [LICENSE](LICENSE).
 ## What is new (2026-08-06)
 
 ### Output handling
+- Selecting a folder with `BROWSE` or editing its `PATH` enables `USE CUSTOM OUTPUT DIR` automatically.
+  The destination applies to transcription, file translation, plain-text translation, and `_CLEAN.txt` sidecars.
 - `AUTO-OPEN WHEN DONE` checkbox (on by default) next to `OPEN OUTPUT FOLDER`: the results folder opens in Explorer as soon as transcription, translation or a full cycle finishes.
 - `RETRY FAILED` requeues every item with the `failed` status; `RELOAD` restarts the whole app process and reloads the browser tab.
 
 ### Power actions after a batch
 - `POWER ACTION AFTER BATCH` replaces the old shutdown checkbox and now has a `SHUT DOWN / SLEEP` selector plus `CANCEL`.
 - `SHUT DOWN` runs `shutdown /s /t 60` (cancellable with `shutdown /a`).
-- `SLEEP` waits 60 cancellable seconds and then calls `rundll32.exe powrprof.dll,SetSuspendState 0,1,0`. For real S3 sleep instead of hibernation run `powercfg /h off` once.
+- `SLEEP` waits 60 cancellable seconds, enables the required Windows process privilege, and calls
+  the documented `SetSuspendState` API with hibernation and forced sleep disabled. It uses the
+  sleep state supported by the hardware, including Modern Standby; changing hibernation settings is not required.
+- The countdown begins only after the last processing stage (after translation for `FULL CYCLE`).
+  Empty, cancelled, or unsuccessful runs do not arm it. `CANCEL`, disabling the option, or starting
+  a new batch cancels a pending action. Scheduling and cancellation errors are reported rather than hidden.
 
 ### Custom AI providers
 - `TRANSLATION -> CUSTOM AI PROVIDER (OpenAI-compatible)` registers any OpenAI-compatible endpoint: LM Studio, Ollama OpenAI shim, vLLM, LiteLLM, corporate gateways.
@@ -145,7 +161,7 @@ All rights reserved. See [LICENSE](LICENSE).
 
 ### UI
 - Pastel production palette: one steel-blue accent plus muted sand, brick, teal and rose, no neon.
-- `CLEAR` buttons are intentionally highlighted (rose border and ring) because the action is destructive.
+- The brown `CLEAR` button clears session source/result selections without deleting files from disk.
 - Checkboxes and the power selector are real 48 px controls aligned with the buttons, with modern thin scrollbars.
 
 ### Stability

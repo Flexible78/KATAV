@@ -28,6 +28,54 @@ from ui_manager import ui_state
 from queue_manager import batch_queue
 from google_drive import is_google_drive_url, download_google_drive_file
 
+def _recoverable_completed_outputs(returncode, completed, paths, previous, formats):
+    """Recognize complete fresh SRT/TXT after a known native teardown failure.
+
+    This preserves results, not successful process status. Power actions must
+    remain blocked by the failed queue item even when these files are usable.
+    """
+    requested = set(formats or [])
+    if (returncode & 0xffffffff) != 0xc0000409 or not completed:
+        return False
+    if not requested or not requested.issubset({'srt', 'txt'}):
+        return False
+    found = set()
+    for path in paths:
+        suffix = Path(path).suffix.lower().lstrip('.')
+        if suffix not in requested:
+            continue
+        try:
+            stat = os.stat(path)
+            fingerprint = (stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size)
+            if not stat.st_size or previous.get(os.path.abspath(path)) == fingerprint:
+                continue
+            text = Path(path).read_text(encoding='utf-8-sig').strip()
+            if not text or '\x00' in text:
+                continue
+            if suffix == 'srt':
+                blocks = re.split(r'\n\s*\n', text)
+                pattern = r'\d+\n(\d{2,}:\d{2}:\d{2},\d{3}) --> (\d{2,}:\d{2}:\d{2},\d{3})\n(.+)'
+                valid = True
+                for block in blocks:
+                    match = re.fullmatch(pattern, block.strip(), re.DOTALL)
+                    if not match or not match.group(3).strip():
+                        valid = False
+                        break
+                    timestamps = []
+                    for value in match.group(1, 2):
+                        hours, minutes, seconds, millis = map(int, re.split('[:,]', value))
+                        if minutes >= 60 or seconds >= 60:
+                            valid = False
+                        timestamps.append(((hours * 60 + minutes) * 60 + seconds) * 1000 + millis)
+                    if timestamps[1] < timestamps[0]:
+                        valid = False
+                if not valid:
+                    continue
+            found.add(suffix)
+        except (OSError, UnicodeError):
+            continue
+    return found == requested
+
 def _gpu_power_limit_set(watts):
     """Best-effort: read current GPU power limit and set a new cap. Returns previous limit or None."""
     if not watts: return None
@@ -261,6 +309,15 @@ def _extract_youtube_id(url: str) -> str:
     return ""
 
 
+def _yt_dlp_js_runtime_args():
+    """Enable an installed supported JS runtime without downloading executable code."""
+    import shutil
+    for runtime in ("node", "deno"):
+        if shutil.which(runtime):
+            return ["--js-runtimes", runtime]
+    return []
+
+
 def _download_url_to_queue(
     url: str, output_dir: str,
     files_to_process: List[Any],
@@ -296,8 +353,11 @@ def _download_url_to_queue(
 
     cmd = [
         sys.executable, "-m", "yt_dlp",
-        "--no-warnings",
         "--no-playlist",
+        "--socket-timeout", "20",
+        "--retries", "2",
+        "--fragment-retries", "2",
+        "--extractor-retries", "2",
         "-f", "bestaudio/best",
         "-x",
         "--audio-format", "mp3",
@@ -306,6 +366,7 @@ def _download_url_to_queue(
         "--print", "after_move:filepath",
         "--progress",
     ]
+    cmd.extend(_yt_dlp_js_runtime_args())
     cmd.append(url)
 
     printed_path = ""
@@ -361,8 +422,12 @@ def _download_url_to_queue(
                 return local_path
             else:
                 _log_url_error(url, video_id, first_error_line)
+                if item_idx is not None:
+                    batch_queue.mark_item_failed(item_idx, first_error_line or "Audio download failed: no completed MP3 produced")
     except Exception as e:
         log_queue.put(f"❌ URL download error for {url}: {e}\n")
+        if item_idx is not None and not utils.stop_requested:
+            batch_queue.mark_item_failed(item_idx, "Audio download failed")
     finally:
         utils.current_process = None
 
@@ -377,6 +442,11 @@ def _log_url_error(url: str, video_id: str, error_line: str):
         log_queue.put("[ERROR] YouTube requires sign-in for this video. Skipped.\n")
     elif "video unavailable" in err_lower or "private" in err_lower or "removed" in err_lower or "unavailable" in err_lower:
         log_queue.put(f"[ERROR] Video is unavailable or private: {vid}. Skipped.\n")
+    elif "403" in err_lower or "forbidden" in err_lower:
+        log_queue.put(f"[ERROR] YouTube rejected the media download (HTTP 403): {vid}. "
+                      "Update yt-dlp with its default dependencies and ensure Node.js or Deno is available. "
+                      "If the video requires account access, download it through an authorized browser and add the local file. "
+                      "This item failed; automatic sleep/shutdown will not run.\n")
     else:
         msg = error_line.strip() if error_line else f"yt-dlp exited with code for URL: {url}"
         log_queue.put(f"[ERROR] Download failed for {vid}: {msg}\n")
@@ -527,11 +597,13 @@ def run_transcription(
                 return qi
         return None
 
-    def _read_whisper_output_and_track(process, item_idx: int):
+    def _read_whisper_output_and_track(process, item_idx: int, completed):
         """Stream Whisper stdout, forward to log queue, and update item progress."""
         try:
             for raw_line in process.stdout:
                 line = utils.strip_ansi(raw_line)
+                if line.strip().startswith('Operation finished in:'):
+                    completed.set()
                 log_queue.put(line + ("\n" if not line.endswith("\n") else ""))
                 progress = utils.parse_whisper_progress(line)
                 if progress:
@@ -598,32 +670,41 @@ def run_transcription(
             log_queue.put(f"\n🚜 [BATCH {idx+1}/{len(files_to_process)}] Processing: {base_name}\n")
 
             # ── BD8: SKIP DONE logic ──
+            current_queue_item = _find_queue_item(video_path)
+            file_output_formats = list(output_formats or [])
             if skip_done and output_formats:
-                current_out_dir_skip = output_dir.strip() if (use_custom_output and output_dir.strip()) else os.path.dirname(os.path.abspath(video_path))
-                expected = any(
-                    os.path.isfile(os.path.join(current_out_dir_skip, f"{base_name}.{ext}"))
-                    for ext in output_formats
-                )
-                if expected:
+                if use_custom_output and output_dir.strip():
+                    current_out_dir_skip = global_out_dir
+                elif "Temp" in video_path or "temp" in video_path:
+                    current_out_dir_skip = DEFAULT_OUTPUT_DIR
+                else:
+                    current_out_dir_skip = os.path.dirname(os.path.abspath(video_path))
+                missing_formats = [
+                    ext for ext in output_formats
+                    if not os.path.isfile(os.path.join(current_out_dir_skip, f"{base_name}.{ext}"))
+                ]
+                if not missing_formats:
                     log_queue.put(f"[SKIP] output exists: {base_name}\n")
                     if current_queue_item:
                         batch_queue.mark_item_skipped(current_queue_item.idx, "Output already exists")
                     log_queue.put(f"[PROGRESS_FILE] | {current_queue_item.idx if current_queue_item else idx+1} | {total_files} | {base_name} | skipped\n")
                     continue
+                if len(missing_formats) != len(output_formats):
+                    file_output_formats = missing_formats
+                    log_queue.put(f"[SKIP] partial: {base_name} -> only missing formats: {', '.join(missing_formats)}\n")
 
-            current_queue_item = _find_queue_item(video_path)
             if current_queue_item is not None:
                 batch_queue.mark_item_running(current_queue_item.idx)
             log_queue.put(f"[PROGRESS_FILE] | {current_queue_item.idx if current_queue_item else idx+1} | {total_files} | {base_name} | running\n")
             
-            if use_custom_output and output_dir.strip(): current_out_dir = output_dir.strip()
+            if use_custom_output: current_out_dir = global_out_dir
             elif "Temp" in video_path or "temp" in video_path: current_out_dir = DEFAULT_OUTPUT_DIR
             else: current_out_dir = os.path.dirname(os.path.abspath(video_path))
                 
             os.makedirs(current_out_dir, exist_ok=True)
             
             command = [WHISPER_EXE]
-            if output_formats: command.append("--output_format"); command.extend(output_formats)
+            if file_output_formats: command.append("--output_format"); command.extend(file_output_formats)
             if language and language != "auto": command.extend(["--language", language])
             command.extend(["--model", model_size, f"--compute_type={compute_type}"])
             if initial_prompt and initial_prompt != "auto": command.extend(["-prompt", initial_prompt])
@@ -637,7 +718,7 @@ def run_transcription(
             if vad_method != "No VAD": command.extend(["--vad_method", vad_method])
             if use_sentence: command.append("--sentence")
             if use_print_progress: command.append("--print_progress")
-            if use_vad_filter: command.extend(["--vad_filter", "True"])
+            command.extend(["--vad_filter", "True" if use_vad_filter and vad_method != "No VAD" else "False"])
             if use_beep_off: command.append("--beep_off")
             # --threads flag confirmed via --help (MUST be before -- separator!)
             command.extend(["--threads", str(WHISPER_MAX_THREADS)])
@@ -647,18 +728,32 @@ def run_transcription(
             for i, cmd_part in enumerate(command):
                 log_queue.put(f"[CMD] {i}: {cmd_part}\n")
 
+            previous_outputs = {}
+            for existing in Path(current_out_dir).iterdir():
+                if existing.is_file() and existing.name.startswith(base_name):
+                    stat = existing.stat()
+                    previous_outputs[str(existing.resolve())] = (stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size)
+            completed = threading.Event()
             current_process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='replace', bufsize=1, shell=False, creationflags=creationflags, env=env)
-            threading.Thread(target=_read_whisper_output_and_track, args=(current_process, current_queue_item.idx if current_queue_item else idx+1), daemon=True).start()
+            stdout_reader = threading.Thread(target=_read_whisper_output_and_track, args=(current_process, current_queue_item.idx if current_queue_item else idx+1, completed), daemon=True)
+            stdout_reader.start()
             # Collect stderr separately for diagnostics on failure
             stderr_lines_list = []
-            def _read_stderr():
+            def _read_stderr(process, lines):
                 try:
-                    for raw_line in current_process.stderr:
-                        stderr_lines_list.append(utils.strip_ansi(raw_line).rstrip())
+                    for raw_line in process.stderr:
+                        lines.append(utils.strip_ansi(raw_line).rstrip())
+                        if len(lines) > 50:
+                            del lines[:-50]
                 except Exception:
                     pass
-            threading.Thread(target=_read_stderr, daemon=True).start()
+                finally:
+                    process.stderr.close()
+            stderr_reader = threading.Thread(target=_read_stderr, args=(current_process, stderr_lines_list), daemon=True)
+            stderr_reader.start()
             current_process.wait()
+            stdout_reader.join(timeout=5)
+            stderr_reader.join(timeout=5)
             whisper_rc = current_process.returncode
             if current_queue_item is not None:
                 batch_queue.update_item_progress(current_queue_item.idx, 100.0) 
@@ -678,6 +773,25 @@ def run_transcription(
                                 current_file_downloads.append(os.path.abspath(os.path.join(current_out_dir, fname)))
                                 
             current_file_downloads = list(set(current_file_downloads))
+
+            recovered_outputs = False
+            if not stop_requested and (whisper_rc != 0 or not current_file_downloads):
+                detail = "Whisper exited with code %s" % whisper_rc if whisper_rc != 0 else "Whisper produced no requested output files"
+                if stderr_lines_list:
+                    detail += ": " + " | ".join(stderr_lines_list[-5:])
+                log_queue.put("[ERROR] " + base_name + ": " + detail + "\n")
+                if current_queue_item is not None:
+                    batch_queue.mark_item_failed(current_queue_item.idx, detail)
+                recovery_candidates = [p for p in current_file_downloads
+                                       if os.path.basename(p) in {f'{base_name}.{ext}' for ext in file_output_formats}]
+                recovered_outputs = _recoverable_completed_outputs(
+                    whisper_rc, completed.is_set() and not stdout_reader.is_alive(),
+                    recovery_candidates, previous_outputs, file_output_formats)
+                if not recovered_outputs:
+                    continue
+                current_file_downloads = recovery_candidates
+                log_queue.put('[WARNING] Completed fresh subtitle/text files recovered after native Whisper exit failure. '
+                              'Results remain available; this batch is NOT successful and sleep/shutdown is disabled.\n')
 
             # Generate *_CLEAN.txt plain-text sidecars when requested.
             if plain_text_output and not stop_requested:
@@ -804,9 +918,10 @@ def run_transcription(
                     all_clean_text += f"\n--- {base_name} ---\n" + "\n".join([line for line in clean_text_result.split('\n') if line.strip()]) + "\n"
                 except: pass
             
-            if current_queue_item is not None:
+            if current_queue_item is not None and not recovered_outputs:
                 batch_queue.mark_item_done(current_queue_item.idx)
-            log_queue.put(f"[PROGRESS_FILE] | {current_queue_item.idx if current_queue_item else idx+1} | {total_files} | {base_name} | done\n")
+            item_status = 'failed' if recovered_outputs else 'done'
+            log_queue.put(f"[PROGRESS_FILE] | {current_queue_item.idx if current_queue_item else idx+1} | {total_files} | {base_name} | {item_status}\n")
             
         final_status = gr.update(elem_classes=["status-error"]) if stop_requested else gr.update(elem_classes=["status-done"])
         # ── Honest batch summary (BD11) ──
@@ -845,4 +960,6 @@ def run_transcription(
 
     all_paths_str = "|".join(produced_text_paths)
     last_path = produced_text_paths[-1] if produced_text_paths else ""
+    if produced_text_paths and not use_custom_output:
+        global_out_dir = os.path.dirname(produced_text_paths[-1])
     return gr.update(value=all_clean_text), gr.update(value=all_downloadable_files if all_downloadable_files else []), final_status, all_paths_str, last_path, global_out_dir

@@ -23,10 +23,10 @@ The interface has two columns:
 ## 2. Transcribing media
 
 1. **Add files.** Do one or more of the following:
-   - Type or paste a file or folder path into the **FILE / FOLDER PATH** field.
-   - Click **FILE** to pick files, or **DIR** to pick a folder for batch processing.
-   - Drag and drop audio or video files onto the drop zone.
-   - Paste media URLs (YouTube, VK, TikTok) into the **URLS** field. Audio is downloaded with yt-dlp before transcription.
+   - Use **SOURCES** to add a file/folder path or media URL with **ADD**, or paste clipboard files/links with **PASTE**.
+   - Click the unified drop zone to choose files, drag files onto it, or use **FOLDER** for batch input.
+   - Media files and existing SRT/text documents are classified separately. File names are displayed without full paths; click a name to open it.
+   - Media URLs are downloaded with yt-dlp before transcription. Sources are not restored between launches.
 2. **Choose language.** Set **LANGUAGE** to the spoken language (`ru`, `en`, `he`) or leave it on `auto` for automatic detection. Specifying the language reduces recognition errors.
 3. **Pick a model.** Choose a **MODEL** size (see [section 3](#3-choosing-a-whisper-model)).
 4. **Pick compute type.** Set **COMPUTE** to `float16` for NVIDIA GPUs, `int8` for low VRAM or CPU, or `float32` for full precision.
@@ -72,6 +72,10 @@ The last working model for each provider is remembered automatically. The next t
 
 Use **CHECK API** before translating to verify that your key and model work with the selected provider.
 
+**Translate an existing SRT without transcription:** add it to **SOURCES**, select **Files** mode and the target language, then click **TRANSLATE**. Clear previous session sources/results first if you want to translate only the newly added document.
+
+**Fast free-tier option:** select **Groq (OSS 120b)** and model `openai/gpt-oss-20b`. The provider label is historical; this selection uses the smaller general-purpose model, not the safeguard moderation model. An API key and the provider's account/quota limits apply; usage is not unlimited. Whole subtitle cues are batched together, and returned cue IDs/timestamps are checked before accepting a translation. Failed chunks retain the original text in a `_PARTIAL` result and are not reported as successful translation.
+
 ---
 
 ## 5. Refreshing the model list
@@ -105,9 +109,18 @@ To use it:
 By default, output files are saved **next to the source media file**. For files downloaded from URLs or copied to a temp folder, outputs go to the `Outputs/` folder inside the KATAV directory.
 
 To use a custom output location:
-1. Open the **OUTPUT DIRECTORY** accordion.
-2. Tick **USE CUSTOM OUTPUT DIR**.
-3. Type a path or click **BROWSE** to pick a folder.
+1. Open the **OUTPUT** accordion.
+2. Type a **PATH** or click **BROWSE** to pick a folder. This automatically enables **USE CUSTOM OUTPUT DIR**;
+   cancelling the folder picker keeps the previous selection.
+3. Select the required formats. Both transcription and translation write to this destination.
+   **PLAIN TEXT** also writes a `_CLEAN.txt` file without subtitle numbering or timestamps.
+
+With **AUTO-OPEN WHEN DONE** enabled, Explorer opens the folder containing the actual result files.
+For **FULL CYCLE**, this happens after translation, not between the two stages.
+
+**POWER ACTION AFTER BATCH** selects **SHUT DOWN** or **SLEEP** after the last stage completes successfully.
+Both have a 60-second cancellation window. **CANCEL**, disabling the checkbox, or starting a new batch
+cancels the pending action. Sleep uses the Windows API and does not require disabling hibernation.
 
 Translated files are named with a language suffix, for example `lecture_TRANSLATED_EN.srt`. Partial results from a cancelled run are saved with a `_PARTIAL` suffix.
 
@@ -139,7 +152,7 @@ Clicking **EXIT (app + consoles)** stops both console windows and tries to close
 ## 11. YouTube playlists, Google Drive, and Spotify
 
 - **YouTube playlists:** click **+ PLAYLIST** and paste a playlist URL. The app expands the playlist into individual video items in the background, keeps the original order, and prefixes downloaded files with `001_`, `002_`, etc. Auto-generated Mix/Radio lists (IDs starting with `RD` or `UL`) are rejected. Only the first 50 items are added at once.
-- **Google Drive:** paste a public shared link (`drive.google.com/file/d/<id>` or containing `?id=<id>`). The file is downloaded to `Outputs/_url_cache` and processed like a local file. To access private files, click **SIGN IN TO GOOGLE** and complete the OAuth flow. See [docs/SETUP.md](SETUP.md) for how to create the OAuth credentials.
+- **Google Drive:** paste a public shared link (`drive.google.com/file/d/<id>` or containing `?id=<id>`). The file is downloaded and processed like a local file. The Google sign-in panel has been removed; download private files through your authorized browser and add them locally.
 - **Spotify:** Spotify audio streams are encrypted with DRM (Widevine) and cannot be downloaded, even with authentication. The official Spotify Web API only provides metadata and 30-second previews, not full audio. KATAV does not support Spotify. For podcasts, use the podcast's RSS feed or the same episode on YouTube instead.
 
 ---

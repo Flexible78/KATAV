@@ -14,7 +14,7 @@ from config import (
     get_custom_provider, save_custom_provider,
 )
 from ui_manager import ui_state
-from srt_processor import chunk_text, sanitize_srt_text
+from srt_processor import chunk_text, sanitize_srt_text, validate_srt_translation
 from queue_manager import batch_queue
 import json
 
@@ -165,10 +165,19 @@ def translate_content(
     sys_prompt: str, custom_srt_files: List[Any], srt_local_path: str,
     hidden_actual_out_dir: str, hidden_srt_paths: str, translate_mode: str, plain_text_input: str,
     force_all_langs: bool = False, source_language: str = "auto",
-    plain_text_output: bool = False
+    plain_text_output: bool = False,
+    use_custom_output: bool = False, output_dir: str = ""
 ) -> Tuple[str, str, str]:  # return three values
     if getattr(utils, 'stop_requested', False):
         return "⚠️ Translation cancelled before start.", "", ""
+
+    selected_output_dir = ""
+    if use_custom_output:
+        try:
+            selected_output_dir = utils.get_actual_output_dir("", True, output_dir)
+            os.makedirs(selected_output_dir, exist_ok=True)
+        except (OSError, ValueError) as e:
+            return "❌ Output folder error: " + str(e), "", ""
 
     client = None
     ui_state.save_settings({
@@ -202,7 +211,7 @@ def translate_content(
     def live_log(msg: str):
         utils.log_to_terminal(msg); utils.log_queue.put(msg + "\n")
 
-    if not api_key and provider != "Local Proxy (127.0.0.1)" and not _custom_cfg(provider):
+    if not api_key and provider not in ("Local Proxy (127.0.0.1)", "Freeway") and not _custom_cfg(provider):
         return "❌ Error: No API key specified!", "", ""
     if not model_name or not model_name.strip():
         return "❌ Error: No model selected! Click 🔄 to refresh models.", "", ""
@@ -218,7 +227,7 @@ def translate_content(
             for p in paths:
                 if os.path.isdir(p):
                     for f in glob.glob(os.path.join(p, '*.*')):
-                        if f.lower().endswith(('.srt', '.md')): files_to_translate.append(f)
+                        if f.lower().endswith(valid_exts): files_to_translate.append(f)
                 elif os.path.isfile(p) and p.lower().endswith(valid_exts): files_to_translate.append(p)
         if custom_srt_files:
             for f in custom_srt_files:
@@ -243,6 +252,7 @@ def translate_content(
     saved_files = []
     all_clean_editor_text = ""
     files_written_count = 0
+    translation_errors = 0
     processed_pairs: Set[Tuple[str, str]] = set()
 
     try:
@@ -273,31 +283,32 @@ def translate_content(
             if resp.status_code in [404, 400]: raise Exception(f"CRITICAL_API_ERROR: Proxy error {resp.status_code}")
             resp.raise_for_status()
         elif provider == "Google Studio (Gemma 4)":
+            model_name = model_name.removeprefix("models/")
             if not OPENAI_READY: raise ImportError("Module openai is not installed.")
-            client = OpenAI(base_url="https://generativelanguage.googleapis.com/v1beta/openai/", api_key=api_key, max_retries=0)
+            client = OpenAI(base_url="https://generativelanguage.googleapis.com/v1beta/openai/", api_key=api_key, max_retries=0, timeout=60.0)
             client.chat.completions.create(model=model_name, messages=[{"role": "user", "content": "Ping"}], max_tokens=2) 
         elif provider == "OpenRouter":
             if not OPENAI_READY: raise ImportError("Module openai is not installed.")
             headers = {"HTTP-Referer": "http://localhost", "X-Title": "AT-Whisper"}
-            client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=api_key, default_headers=headers, max_retries=0)
+            client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=api_key, default_headers=headers, max_retries=0, timeout=60.0)
             client.chat.completions.create(model=model_name, messages=[{"role": "user", "content": "Ping"}], max_tokens=2) 
         elif provider == "Groq (OSS 120b)":
             if not GROQ_READY: raise ImportError("Module groq is not installed. Run: pip install groq")
-            groq_client = Groq(api_key=api_key)
+            groq_client = Groq(api_key=api_key, timeout=60.0, max_retries=0)
             groq_client.chat.completions.create(model=model_name, messages=[{"role": "user", "content": "Ping"}], max_tokens=2)
             client = groq_client
         elif provider == "OmniRoute" or _custom_cfg(provider):
             if not OPENAI_READY: raise ImportError("Module openai is not installed.")
             _base, _key = _openai_endpoint(provider, api_key)
-            client = OpenAI(base_url=(_base or OMNIROUTE_BASE_URL), api_key=_key, max_retries=0)
+            client = OpenAI(base_url=(_base or OMNIROUTE_BASE_URL), api_key=_key, max_retries=0, timeout=60.0)
             client.chat.completions.create(model=model_name, messages=[{"role": "user", "content": "Ping"}], max_tokens=2)
         elif provider == "Freeway":
             if not OPENAI_READY: raise ImportError("Module openai is not installed.")
-            client = OpenAI(base_url=FREEWAY_BASE_URL, api_key=(api_key or FREEWAY_DEFAULT_KEY), max_retries=0)
+            client = OpenAI(base_url=FREEWAY_BASE_URL, api_key=(api_key or FREEWAY_DEFAULT_KEY), max_retries=0, timeout=60.0)
             client.chat.completions.create(model=model_name, messages=[{"role": "user", "content": "Ping"}], max_tokens=2)
         elif provider == "Mistral":
             if not OPENAI_READY: raise ImportError("Module openai is not installed.")
-            client = OpenAI(base_url=MISTRAL_BASE_URL, api_key=api_key, max_retries=0)
+            client = OpenAI(base_url=MISTRAL_BASE_URL, api_key=api_key, max_retries=0, timeout=60.0)
             client.chat.completions.create(model=model_name, messages=[{"role": "user", "content": "Ping"}], max_tokens=2)
         logging.info(f"[CHECK_API] ✅ {provider} check passed successfully")
         _save_last_model(provider, model_name)
@@ -313,7 +324,7 @@ def translate_content(
         if fpath == "PLAIN_TEXT":
             orig_text = plain_text_input
             b_name = "Text_Translation"
-            o_dir = hidden_actual_out_dir if hidden_actual_out_dir else os.path.expanduser("~")
+            o_dir = selected_output_dir or hidden_actual_out_dir or DEFAULT_OUTPUT_DIR
             is_srt = False
         else:
             ext = fpath.lower().split('.')[-1] if '.' in fpath else ''
@@ -342,13 +353,16 @@ def translate_content(
                 orig_text = sanitize_srt_text(orig_text)
                 
             b_name = os.path.splitext(os.path.basename(fpath))[0]
-            o_dir = DEFAULT_OUTPUT_DIR if "Temp" in fpath or "temp" in fpath else os.path.dirname(os.path.abspath(fpath))
+            o_dir = selected_output_dir or (DEFAULT_OUTPUT_DIR if "Temp" in fpath or "temp" in fpath else os.path.dirname(os.path.abspath(fpath)))
+
+        os.makedirs(o_dir, exist_ok=True)
             
-        if provider == "Google Studio (Gemma 4)": chunk_lim = 6
-        elif provider == "Groq (OSS 120b)": chunk_lim = 3
+        if provider == "Google Studio (Gemma 4)": chunk_lim = 20
+        elif provider == "Groq (OSS 120b)": chunk_lim = 24
         else: chunk_lim = 15 if is_srt else 10
             
-        c_list = chunk_text(orig_text, chunk_lim, by_paragraphs=not is_srt)
+        c_list = chunk_text(orig_text, chunk_lim, by_paragraphs=not is_srt,
+                            max_chars=3000 if provider == "Groq (OSS 120b)" else 6000)
         file_chunks_map.append((fpath, orig_text, b_name, o_dir, c_list, is_srt))
 
     # Determine source language per file and filter out targets matching it.
@@ -422,6 +436,16 @@ def translate_content(
                 live_log(f"[TRANSLATE] Duplicate target skipped: {base_name} -> {target_lang}.")
                 continue
             processed_pairs.add(pair_key)
+
+            # Do not redo work that already exists in the output folder.
+            lang_suffix = TARGET_LANGUAGE_CODE_MAP.get(target_lang, lang_code(target_lang).upper())
+            if fpath != "PLAIN_TEXT":
+                _exist_ext = os.path.splitext(fpath)[1] or ".txt"
+                _exist_path = os.path.join(out_dir, f"{base_name}_TRANSLATED_{lang_suffix}{_exist_ext}")
+                if os.path.isfile(_exist_path):
+                    live_log(f"[SKIP] Translation already exists, not overwritten: {os.path.basename(_exist_path)}")
+                    saved_files.append(_exist_path)
+                    continue
             
             matched_tokens = _matched_language_tokens(base_name, target_lang)
             if matched_tokens and not force_all_langs:
@@ -474,7 +498,7 @@ def translate_content(
                 user_prompt = f"Translate this text into {target_lang}.\n\nTEXT:\n{chunk_text_str}"
                 live_log(f"   Processing chunk {idx+1} of {len(chunks)}...")
                 
-                max_retries = 10 
+                max_retries = 4
                 success = False
                 
                 def _send_to_api(prompt_text: str) -> str:
@@ -507,7 +531,7 @@ def translate_content(
                         _resp = client.chat.completions.create(
                             model=model_name,
                             messages=[{"role": "system", "content": sys_prompt}, {"role": "user", "content": prompt_text}],
-                            max_completion_tokens=8192,
+                            max_completion_tokens=min(4096, max(768, len(prompt_text) // 2 + 768)),
                             temperature=1,
                             top_p=1,
                         )
@@ -529,6 +553,8 @@ def translate_content(
                             
                         if result_text: 
                             clean_result = re.sub(r'<(thought|think)>.*?(<\/\1>|$)\s*', '', result_text, flags=re.DOTALL).strip()
+                            if is_srt:
+                                clean_result = validate_srt_translation(chunk_text_str, clean_result)
                             translated_blocks.append(clean_result)
                             success = True
                             logging.info(f"[TRANSLATE] ✅ Chunk {idx+1} — OK ({len(clean_result)} chars)")
@@ -550,13 +576,17 @@ def translate_content(
                                     sub_result = _send_to_api(sub_prompt)
                                     if sub_result:
                                         sub_clean = re.sub(r'<(thought|think)>.*?(<\/\1>|$)\s*', '', sub_result, flags=re.DOTALL).strip()
+                                        if is_srt:
+                                            sub_clean = validate_srt_translation(single_block, sub_clean)
                                         sub_results.append(sub_clean)
                                         live_log(f"      ✅ Sub-block {sub_idx+1}/{len(chunk)} OK")
                                     else:
+                                        translation_errors += 1
                                         sub_results.append(single_block)
                                         live_log(f"      ⚠️ Sub-block {sub_idx+1}/{len(chunk)} — empty response, keeping original")
                                     if sub_idx < len(chunk) - 1: time.sleep(0.5)
                                 except Exception as sub_e:
+                                    translation_errors += 1
                                     live_log(f"      ❌ Sub-block {sub_idx+1}/{len(chunk)} error: {str(sub_e)[:100]}")
                                     sub_results.append(single_block)
                             if sub_results:
@@ -586,9 +616,12 @@ def translate_content(
                         else:
                             live_log(f"   ❌ Final error for chunk {idx+1}: {err_str}")
                             logging.error(f"[TRANSLATE] ❌ All attempts exhausted for chunk {idx+1}: {err_str}")
-                            translated_blocks.append(f"==== TRANSLATION ERROR BLOCK ====\n{chunk_text_str}")
 
                 if not success and getattr(utils, 'stop_requested', False): break
+                if not success:
+                    translation_errors += 1
+                    translated_blocks.append(chunk_text_str)
+                    live_log(f"[WARNING] Chunk {idx+1} was not translated; original retained. Batch is not successful.")
                 if idx < len(chunks) - 1: 
                     delay = 3.0 if provider == "Local Proxy (127.0.0.1)" else 1.5
                     if utils.interruptible_sleep(delay): break 
@@ -599,7 +632,7 @@ def translate_content(
                 orig_ext = os.path.splitext(fpath)[1] if fpath != "PLAIN_TEXT" else ".txt"
                 ext = orig_ext if orig_ext else ".txt"
                 
-                partial_tag = "_PARTIAL" if getattr(utils, 'stop_requested', False) else ""
+                partial_tag = "_PARTIAL" if getattr(utils, 'stop_requested', False) or translation_errors else ""
                 translated_path = os.path.join(out_dir, f"{base_name}_TRANSLATED_{lang_suffix}{partial_tag}{ext}")
                 translated_path = utils.unique_path(translated_path)
                 if translated_path != os.path.join(out_dir, f"{base_name}_TRANSLATED_{lang_suffix}{partial_tag}{ext}"):
@@ -622,16 +655,19 @@ def translate_content(
                             saved_files.append(clean_path)
                             live_log(f"[CLEAN] {os.path.basename(clean_path)}")
                         except Exception as e:
+                            translation_errors += 1
                             live_log(f"❌ Clean text save error: {e}")
 
                     clean_text = final_translated_text
                     if is_srt:
                         clean_text = utils.clean_srt_text(clean_text)
                     all_clean_editor_text += f"\n--- {base_name} ({target_lang}) ---\n{clean_text}\n"
-                except Exception as e: live_log(f"❌ File save error: {e}")
+                except Exception as e:
+                    translation_errors += 1
+                    live_log(f"❌ File save error: {e}")
 
     if not getattr(utils, 'stop_requested', False):
-        live_log("\n✅ ENTIRE BATCH TRANSLATED!")
+        live_log("\n⚠️ BATCH COMPLETED WITH TRANSLATION ERRORS." if translation_errors else "\n✅ ENTIRE BATCH TRANSLATED!")
         utils.log_queue.put(f"[PROGRESS_FILE] | {len(file_chunks_map)} | {len(file_chunks_map)} | done | done\n")
         # Log [RESULT] lines for every translated file written
         for sf in saved_files:
@@ -643,177 +679,105 @@ def translate_content(
 
         live_log(f"[TRANSLATE] Batch finished: {len(file_chunks_map)} file(s), {len(target_langs)} language(s), {files_written_count} file(s) written.")
 
-    status_msg = f"{'⚠️ Interrupted. Partial progress saved' if getattr(utils, 'stop_requested', False) else '✅ Completed'}: {len(saved_files)} files."
+    result_label = "⚠️ Interrupted. Partial progress saved" if getattr(utils, 'stop_requested', False) else ("⚠️ Completed with errors" if translation_errors else "✅ Completed")
+    status_msg = f"{result_label}: {len(saved_files)} files."
     # Return three values (third is the SRT path list joined by |)
     return status_msg, all_clean_editor_text, "|".join(saved_files)
 
-def check_api(provider: str, current_api_key: str, model_name: str) -> str:
-    if not current_api_key and provider != "Local Proxy (127.0.0.1)" and not _custom_cfg(provider):
-        return "❌ Error: Enter an API key!"
-    if not model_name or not model_name.strip():
-        return "❌ Error: No model selected! Click 🔄 to refresh models or enter a model name manually."
-        
+def _provider_error(error):
+    """Do not expose response bodies, URLs with credentials, or API keys."""
+    status = getattr(error, 'status_code', None)
+    if status is None and getattr(error, 'response', None) is not None:
+        status = error.response.status_code
+    labels = {400: 'Invalid model or request parameters', 401: 'Authentication failed / token expired',
+              403: 'Access denied', 404: 'Model or API endpoint not found',
+              402: 'Payment or credit required', 429: 'Rate limit or quota exhausted'}
+    if status:
+        return f"HTTP {status}: {labels.get(status, 'Provider request failed')}"
+    name = type(error).__name__
+    if 'Timeout' in name:
+        return 'Provider timed out; try again later.'
+    if 'Connection' in name:
+        return 'Cannot connect to provider; check server/network.'
+    if isinstance(error, ValueError):
+        return 'Invalid provider configuration or response.'
+    if isinstance(error, ImportError):
+        return 'Required provider SDK is not installed.'
+    return 'Provider request failed (' + name + ').'
+
+
+def _health_client(provider, api_key):
+    endpoints = {'Google Studio (Gemma 4)': 'https://generativelanguage.googleapis.com/v1beta/openai',
+                 'OpenRouter': 'https://openrouter.ai/api/v1',
+                 'Groq (OSS 120b)': 'https://api.groq.com/openai/v1'}
+    base, key = _openai_endpoint(provider, api_key)
+    base = base or endpoints.get(provider, '')
+    if not base:
+        raise ValueError('Unknown provider')
+    if not OPENAI_READY:
+        raise ImportError('openai')
+    headers = {'HTTP-Referer': 'http://localhost', 'X-Title': 'KATAV'} if provider == 'OpenRouter' else None
+    return OpenAI(base_url=base, api_key=key or 'not-needed', timeout=30.0, max_retries=0, default_headers=headers)
+
+
+def check_api(provider: str, current_api_key: str, model_name: str, *, persist=True) -> str:
+    if not current_api_key and provider not in ('Local Proxy (127.0.0.1)', 'Freeway') and not _custom_cfg(provider):
+        return '❌ Error: Enter an API key!'
+    model_name = str(model_name or '').strip()
+    if not model_name or model_name == 'auto' or model_name.startswith('🔄'):
+        return '❌ Select or enter an exact MODEL ID, then CHECK API.'
     try:
-        if provider == "Google Gemini":
-            if not GEMINI_READY: raise ImportError("Module google.generativeai is not installed.")
+        if provider == 'Google Gemini':
+            if not GEMINI_READY:
+                raise ImportError('google.generativeai')
             genai.configure(api_key=current_api_key)
-            model = genai.GenerativeModel(model_name=model_name)
-            model.generate_content("Ping")
-            _save_last_model(provider, model_name)
-            return f"✅ Success! Connection to {provider} (model {model_name}) works."
-            
-        elif provider == "Local Proxy (127.0.0.1)":
+            response = genai.GenerativeModel(model_name=model_name).generate_content(
+                'Reply OK.', generation_config={'max_output_tokens': 16}, request_options={'timeout': 30})
+            if not response.candidates:
+                raise ValueError('No inference response')
+        elif provider == 'Local Proxy (127.0.0.1)':
             import requests
-            try:
-                requests.get("http://127.0.0.1:8080/", timeout=5.0)
-            except requests.exceptions.ConnectionError:
-                return "❌ Error: Proxy server is not running! Start it on port 8080."
-            except Exception:
-                pass  
-            resp = requests.post("http://127.0.0.1:8080/v1/messages", json={"model": model_name, "system": "ping", "messages": [{"role": "user", "content": "Ping"}]}, timeout=180.0)
-            if resp.status_code == 401: return "❌ Error: Google token expired! Run 'gemini login'."
-            resp.raise_for_status()
+            response = requests.post('http://127.0.0.1:8080/v1/messages',
+                json={'model': model_name, 'max_tokens': 16, 'messages': [{'role': 'user', 'content': 'Reply OK.'}]},
+                timeout=(5, 30), allow_redirects=False)
+            response.raise_for_status()
+            body = response.json()
+            if not isinstance(body, dict) or not (body.get('content') or body.get('choices')):
+                raise ValueError('No inference response')
+        else:
+            resolved = model_name.removeprefix('models/') if provider == 'Google Studio (Gemma 4)' else model_name
+            with _health_client(provider, current_api_key) as client:
+                response = client.chat.completions.create(model=resolved,
+                    messages=[{'role': 'user', 'content': 'Reply OK.'}], max_tokens=16)
+                if not response.choices:
+                    raise ValueError('No inference response')
+        if persist:
             _save_last_model(provider, model_name)
-            return f"✅ Success! Local Proxy responds normally."
-            
-        elif provider == "Google Studio (Gemma 4)":
-            if not OPENAI_READY: raise ImportError("Module openai is not installed.")
-            client = OpenAI(base_url="https://generativelanguage.googleapis.com/v1beta/openai/", api_key=current_api_key)
-            client.chat.completions.create(model=model_name, messages=[{"role": "user", "content": "Ping"}], max_tokens=2)
-            _save_last_model(provider, model_name)
-            return f"✅ Success! Connection to {provider} works."
-            
-        elif provider == "Groq (OSS 120b)":
-            if not GROQ_READY: raise ImportError("Module groq is not installed. Run: pip install groq")
-            groq_client = Groq(api_key=current_api_key)
-            groq_client.chat.completions.create(model=model_name, messages=[{"role": "user", "content": "Ping"}], max_tokens=2)
-            _save_last_model(provider, model_name)
-            return f"✅ Success! Connection to Groq (model {model_name}) works."
-            
-        elif provider == "OpenRouter":
-            if not OPENAI_READY: raise ImportError("Module openai is not installed.")
-            headers = {"HTTP-Referer": "http://localhost", "X-Title": "AT-Whisper"}
-            client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=current_api_key, default_headers=headers)
-            client.chat.completions.create(model=model_name, messages=[{"role": "user", "content": "Ping"}], max_tokens=2)
-            _save_last_model(provider, model_name)
-            return f"✅ Success! Connection to OpenRouter works."
-
-        elif provider == "OmniRoute":
-            if not OPENAI_READY: raise ImportError("Module openai is not installed.")
-            client = OpenAI(base_url=OMNIROUTE_BASE_URL, api_key=current_api_key)
-            client.chat.completions.create(model=model_name, messages=[{"role": "user", "content": "Ping"}], max_tokens=2)
-            _save_last_model(provider, model_name)
-            return f"✅ Success! Connection to OmniRoute works."
-
-        elif provider == "Freeway":
-            if not OPENAI_READY: raise ImportError("Module openai is not installed.")
-            client = OpenAI(base_url=FREEWAY_BASE_URL, api_key=(current_api_key or FREEWAY_DEFAULT_KEY))
-            client.chat.completions.create(model=model_name, messages=[{"role": "user", "content": "Ping"}], max_tokens=2)
-            _save_last_model(provider, model_name)
-            return f"✅ Success! Connection to Freeway works."
-
-        elif _custom_cfg(provider):
-            if not OPENAI_READY: raise ImportError("Module openai is not installed.")
-            _base, _key = _openai_endpoint(provider, current_api_key)
-            client = OpenAI(base_url=_base, api_key=_key)
-            client.chat.completions.create(model=model_name, messages=[{"role": "user", "content": "Ping"}], max_tokens=2)
-            _save_last_model(provider, model_name)
-            return "Success! Connection to " + str(provider) + " works."
-
-        elif provider == "Mistral":
-            if not OPENAI_READY: raise ImportError("Module openai is not installed.")
-            client = OpenAI(base_url=MISTRAL_BASE_URL, api_key=current_api_key)
-            client.chat.completions.create(model=model_name, messages=[{"role": "user", "content": "Ping"}], max_tokens=2)
-            _save_last_model(provider, model_name)
-            return f"✅ Success! Connection to Mistral works."
-            
-    except Exception as e:
-        return f"❌ CONNECTION ERROR: {str(e)}"
+        return f'✅ Inference verified: {provider} · {model_name}'
+    except Exception as error:
+        return '❌ ' + _provider_error(error)
 
 
 def fetch_models(provider: str, api_key: str) -> list:
-    """
-    Dynamically fetch available models from the selected provider.
-    Returns a sorted list of model IDs (strings). On failure returns empty list.
-    """
-    if not api_key and provider != "Local Proxy (127.0.0.1)" and not _custom_cfg(provider):
+    """Bounded discovery; a model catalog is not proof that inference works."""
+    if not api_key and provider not in ('Local Proxy (127.0.0.1)', 'Freeway') and not _custom_cfg(provider):
         return []
-
     try:
-        if provider == "Local Proxy (127.0.0.1)":
+        if provider == 'Local Proxy (127.0.0.1)':
             import requests
-            resp = requests.get("http://127.0.0.1:8080/v1/models", timeout=15.0)
-            resp.raise_for_status()
-            data = resp.json()
-            models = []
-            if "data" in data:
-                models = [m.get("id", "") for m in data["data"] if m.get("id")]
-            elif isinstance(data, list):
-                models = [m.get("id", "") for m in data if m.get("id")]
-            return sorted(models)
-
-        elif provider in ("Google Gemini", "Google Studio (Gemma 4)"):
-            # Use OpenAI-compatible endpoint for Google Studio
-            if not OPENAI_READY:
-                return []
-            if provider == "Google Studio (Gemma 4)":
-                client = OpenAI(base_url="https://generativelanguage.googleapis.com/v1beta/openai/", api_key=api_key)
-            else:
-                # Google Gemini via genai
-                if not GEMINI_READY:
-                    return []
-                genai.configure(api_key=api_key)
-                return sorted([m.name for m in genai.list_models() if "generateContent" in m.supported_generation_methods])
-            models = [m.id for m in client.models.list().data]
-            return sorted(models)
-
-        elif provider == "Groq (OSS 120b)":
-            if not OPENAI_READY:
-                return []
-            client = OpenAI(base_url="https://api.groq.com/openai/v1", api_key=api_key)
-            models = [m.id for m in client.models.list().data]
-            return sorted(models)
-
-        elif provider == "OpenRouter":
-            if not OPENAI_READY:
-                return []
-            headers = {"HTTP-Referer": "http://localhost", "X-Title": "AT-Whisper"}
-            client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=api_key, default_headers=headers)
-            models = [m.id for m in client.models.list().data]
-            return sorted(models)
-
-        elif provider == "OmniRoute":
-            if not OPENAI_READY:
-                return []
-            client = OpenAI(base_url=OMNIROUTE_BASE_URL, api_key=api_key)
-            models = [m.id for m in client.models.list().data]
-            return sorted(models)
-
-        elif provider == "Freeway":
-            if not OPENAI_READY:
-                return []
-            client = OpenAI(base_url=FREEWAY_BASE_URL, api_key=(api_key or FREEWAY_DEFAULT_KEY))
-            models = [m.id for m in client.models.list().data]
-            return sorted(models)
-
-        elif _custom_cfg(provider):
-            if not OPENAI_READY:
-                return []
-            _base, _key = _openai_endpoint(provider, api_key)
-            client = OpenAI(base_url=_base, api_key=_key)
-            models = [m.id for m in client.models.list().data]
-            return sorted(models)
-
-        elif provider == "Mistral":
-            if not OPENAI_READY:
-                return []
-            client = OpenAI(base_url=MISTRAL_BASE_URL, api_key=api_key)
-            models = [m.id for m in client.models.list().data]
-            return sorted(models)
-
-        else:
-            return []
-
-    except Exception as e:
-        logging.warning(f"[FETCH_MODELS] Failed for {provider}: {str(e)[:200]}")
+            response = requests.get('http://127.0.0.1:8080/v1/models', timeout=(5, 15), allow_redirects=False)
+            response.raise_for_status()
+            data = response.json()
+            rows = data.get('data', []) if isinstance(data, dict) else data
+            return sorted({row['id'] for row in rows if isinstance(row, dict) and row.get('id')})
+        if provider == 'Google Gemini':
+            if not GEMINI_READY:
+                raise ImportError('google.generativeai')
+            genai.configure(api_key=api_key)
+            return sorted(m.name for m in genai.list_models(request_options={'timeout': 15})
+                          if 'generateContent' in m.supported_generation_methods)
+        with _health_client(provider, api_key) as client:
+            return sorted({model.id for model in client.models.list(timeout=15).data if model.id})
+    except Exception as error:
+        logging.warning('[FETCH_MODELS] %s: %s', provider, _provider_error(error))
         return []

@@ -134,6 +134,23 @@ def _make_cache_file(cache_dir: str, video_id: str = "dQw4w9WgXcQ") -> str:
     return path
 
 
+class DownloaderRuntimeTests(unittest.TestCase):
+    def test_node_is_enabled_when_installed(self):
+        from whisper_core import _yt_dlp_js_runtime_args
+        with patch("shutil.which", side_effect=lambda name: "node.exe" if name == "node" else None):
+            self.assertEqual(_yt_dlp_js_runtime_args(), ["--js-runtimes", "node"])
+
+    def test_deno_is_supported_without_node(self):
+        from whisper_core import _yt_dlp_js_runtime_args
+        with patch("shutil.which", side_effect=lambda name: "deno.exe" if name == "deno" else None):
+            self.assertEqual(_yt_dlp_js_runtime_args(), ["--js-runtimes", "deno"])
+
+    def test_missing_runtime_does_not_invent_an_executable(self):
+        from whisper_core import _yt_dlp_js_runtime_args
+        with patch("shutil.which", return_value=None):
+            self.assertEqual(_yt_dlp_js_runtime_args(), [])
+
+
 class DownloadUrlToQueueTests(unittest.TestCase):
     """Tests for whisper_core._download_url_to_queue with mocked subprocess/yt-dlp."""
 
@@ -271,6 +288,8 @@ class DownloadUrlToQueueTests(unittest.TestCase):
             self.assertEqual(result, "")
             self.assertEqual(files_to_process, [])
             mock_batch_queue.update_url_to_local.assert_not_called()
+            mock_batch_queue.mark_item_failed.assert_called_once()
+            self.assertEqual(mock_batch_queue.mark_item_failed.call_args.args[0], 1)
 
     @patch("whisper_core.subprocess.Popen")
     @patch("whisper_core._url_cache_dir")

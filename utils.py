@@ -175,13 +175,78 @@ def rescue_text_from_log(log_text: str) -> str:
     return "\n".join(extracted)
 
 def get_actual_output_dir(manual_path: str, use_custom: bool, custom_dir: str) -> str:
-    if use_custom and custom_dir.strip(): return custom_dir.strip()
+    if use_custom:
+        path = (custom_dir or "").strip().strip('"').strip("'")
+        if not path:
+            raise ValueError("Choose an output folder or disable USE CUSTOM OUTPUT DIR.")
+        path = os.path.abspath(os.path.expandvars(os.path.expanduser(path)))
+        if os.path.exists(path) and not os.path.isdir(path):
+            raise ValueError("The output path is a file, not a folder: " + path)
+        return path
     m_path = (manual_path or "").strip()
     if m_path:
         first_path = m_path.split('|')[0].strip().strip('"').strip("'")
         if os.path.isdir(first_path): return first_path
         if os.path.isfile(first_path): return os.path.dirname(os.path.abspath(first_path))
     return DEFAULT_OUTPUT_DIR
+
+
+def suspend_windows() -> None:
+    """Request sleep through the documented API, not rundll32's incompatible ABI."""
+    if os.name != "nt":
+        raise OSError("Sleep is only supported on Windows.")
+    import ctypes
+    from ctypes import wintypes
+
+    class LUID(ctypes.Structure):
+        _fields_ = [("LowPart", wintypes.DWORD), ("HighPart", wintypes.LONG)]
+
+    class TOKEN_PRIVILEGES(ctypes.Structure):
+        _fields_ = [("PrivilegeCount", wintypes.DWORD), ("Luid", LUID),
+                    ("Attributes", wintypes.DWORD)]
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    advapi = ctypes.WinDLL("advapi32", use_last_error=True)
+    power = ctypes.WinDLL("powrprof", use_last_error=True)
+    kernel.GetCurrentProcess.restype = wintypes.HANDLE
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel.CloseHandle.restype = wintypes.BOOL
+    advapi.OpenProcessToken.argtypes = [wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE)]
+    advapi.OpenProcessToken.restype = wintypes.BOOL
+    advapi.LookupPrivilegeValueW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR, ctypes.POINTER(LUID)]
+    advapi.LookupPrivilegeValueW.restype = wintypes.BOOL
+    advapi.AdjustTokenPrivileges.argtypes = [wintypes.HANDLE, wintypes.BOOL,
+        ctypes.POINTER(TOKEN_PRIVILEGES), wintypes.DWORD,
+        ctypes.POINTER(TOKEN_PRIVILEGES), ctypes.POINTER(wintypes.DWORD)]
+    advapi.AdjustTokenPrivileges.restype = wintypes.BOOL
+    power.SetSuspendState.argtypes = [ctypes.c_ubyte, ctypes.c_ubyte, ctypes.c_ubyte]
+    power.SetSuspendState.restype = ctypes.c_ubyte
+    token = wintypes.HANDLE()
+    previous = TOKEN_PRIVILEGES()
+    previous_size = wintypes.DWORD()
+    adjusted = False
+    if not advapi.OpenProcessToken(kernel.GetCurrentProcess(), 0x20 | 0x08, ctypes.byref(token)):
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        privileges = TOKEN_PRIVILEGES()
+        privileges.PrivilegeCount = 1
+        privileges.Attributes = 0x02  # SE_PRIVILEGE_ENABLED
+        if not advapi.LookupPrivilegeValueW(None, "SeShutdownPrivilege", ctypes.byref(privileges.Luid)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        ctypes.set_last_error(0)
+        if not advapi.AdjustTokenPrivileges(token, False, ctypes.byref(privileges),
+                ctypes.sizeof(previous), ctypes.byref(previous), ctypes.byref(previous_size)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        error = ctypes.get_last_error()
+        if error:
+            raise ctypes.WinError(error)
+        adjusted = True
+        if not power.SetSuspendState(False, False, False):
+            raise ctypes.WinError(ctypes.get_last_error())
+    finally:
+        if adjusted:
+            advapi.AdjustTokenPrivileges(token, False, ctypes.byref(previous), 0, None, None)
+        kernel.CloseHandle(token)
 
 def stop_all_processes():
     global stop_requested, current_process, log_queue

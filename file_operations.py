@@ -2,6 +2,40 @@ import os
 import gradio as gr
 from utils import get_actual_output_dir
 
+def open_source_file(path: str) -> str:
+    """Open an explicitly selected media/document file with its associated app."""
+    from source_inputs import MEDIA_EXTENSIONS, DOCUMENT_EXTENSIONS
+    target = os.path.abspath(path)
+    if os.path.splitext(target)[1].lower() not in MEDIA_EXTENSIONS | DOCUMENT_EXTENSIONS:
+        raise ValueError('Only media, subtitles and documents can be opened')
+    if not os.path.isfile(target):
+        raise FileNotFoundError('Selected file is no longer available')
+    if os.name == 'nt':
+        os.startfile(target)
+    else:
+        import subprocess
+        import sys
+        subprocess.Popen(['open' if sys.platform == 'darwin' else 'xdg-open', target], shell=False)
+    return os.path.basename(target)
+
+
+def open_output_folder(path: str) -> str:
+    """Open an existing results directory without shell quoting or stale UI paths."""
+    target = os.path.abspath(os.path.normpath(path))
+    if not os.path.isdir(target):
+        raise FileNotFoundError("Output folder not found: " + target)
+    if os.name == "nt":
+        try:
+            os.startfile(target)
+        except OSError:
+            import subprocess
+            subprocess.Popen(["explorer.exe", target], shell=False)
+    else:
+        import subprocess
+        import sys
+        subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", target], shell=False)
+    return target
+
 def list_files(manual_path: str, use_custom: bool, custom_dir: str):
     out_dir = get_actual_output_dir(manual_path, use_custom, custom_dir)
     if not os.path.exists(out_dir): 
