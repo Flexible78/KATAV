@@ -5,7 +5,7 @@ import logging
 from typing import List
 
 # ==============================================================================
-# 8. ВЗАИМОДЕЙСТВИЕ С ОС И ДИАЛОГАМИ (ПРЯМЫЕ ПУТИ И БУФЕР)
+# 8. OS AND DIALOG INTERACTION (DIRECT PATHS AND CLIPBOARD)
 # ==============================================================================
 def read_clipboard_text() -> str:
     """Return raw clipboard text, no filesystem filtering."""

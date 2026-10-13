@@ -15,7 +15,7 @@ import gradio as gr
 from config import CONFIG_FILE, DEFAULT_OUTPUT_DIR
 
 # ==============================================================================
-# 1. ЛОГГИРОВАНИЕ И ИНИЦИАЛИЗАЦИЯ
+# 1. LOGGING AND INITIALIZATION
 # ==============================================================================
 _LOG_FILE = "app.log"
 _MAX_LOG_BYTES = 5 * 1024 * 1024  # 5 MB
@@ -47,7 +47,7 @@ logging.basicConfig(
 def log_to_terminal(msg: str) -> None:
     logging.info(msg)
 
-# Глобальные переменные
+# Global variables
 log_queue = queue.Queue()       
 process_active = False          
 current_process = None          
@@ -64,7 +64,7 @@ OPENAI_READY = False
 model_load_start_time = 0.0
 
 # ==============================================================================
-# УТИЛИТЫ И КЛЮЧИ
+# UTILITIES AND KEYS
 # ==============================================================================
 def load_keys() -> Dict[str, str]:
     if os.path.exists(CONFIG_FILE):
@@ -539,7 +539,7 @@ def process_logs(current_log: str) -> Tuple[str, str]:
     return new_text, metrics_html
     
 # ==============================================================================
-# 11. МЕХАНИЗМ ПАУЗЫ
+# 11. PAUSE MECHANISM
 # ==============================================================================
 pause_requested = False
 

@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 
 # ==============================================================================
-# 2. КОНСТАНТЫ И ПУТИ ФАЙЛОВОЙ СИСТЕМЫ
+# 2. CONSTANTS AND FILESYSTEM PATHS
 # ==============================================================================
 PORT = 7861
 
@@ -119,7 +119,7 @@ _LANG_MIGRATION_TABLE = TARGET_LANGUAGE_CODE_MAP
 
 
 # ==============================================================================
-# 4. КАСТОМНЫЕ СТИЛИ (CSS) ДЛЯ ВЕБ-ИНТЕРФЕЙСА
+# 4. CUSTOM STYLES (CSS) FOR THE WEB UI
 # ==============================================================================
 def sanitize_choice_value(value: str, valid_choices: list) -> str | None:
     """Return *value* if it appears in *valid_choices*, otherwise None.
@@ -510,7 +510,7 @@ body.katav-light #clear_media_btn:hover,body.katav-light #clear_trans_files_btn:
 """
 
 # ==============================================================================
-# 6. ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ УПРАВЛЕНИЯ (ТОЛЬКО СПИСКИ МОДЕЛЕЙ)
+# 6. GLOBAL CONTROL VARIABLES (MODEL LISTS ONLY)
 # ==============================================================================
 GOOGLE_STUDIO_MODELS = [
     "models/gemma-4-31b-it", 
@@ -568,18 +568,18 @@ OPENROUTER_MODELS = [
 ]
 
 # ==============================================================================
-# 7. НОВЫЕ AI-ПРОВАЙДЕРЫ (OpenAI-совместимые)
+# 7. NEW AI PROVIDERS (OpenAI-compatible)
 # ==============================================================================
-# OmniRoute (порт 20128 — подтверждён ATS Checker 3.3 + curl /v1/models и /v1/chat/completions)
+# OmniRoute (port 20128 — verified with ATS Checker 3.3 + curl /v1/models and /v1/chat/completions)
 OMNIROUTE_BASE_URL = "http://127.0.0.1:20128/v1"
-# Freeway (порт 8787 — отвечает на /v1/models, подтверждён curl-ом)
+# Freeway (port 8787 — answers /v1/models, verified via curl)
 FREEWAY_BASE_URL = "http://127.0.0.1:8787/v1"
-FREEWAY_DEFAULT_KEY = "123"  # ключ по умолчанию для Freeway
-# Mistral (облачный, OpenAI-совместимый)
+FREEWAY_DEFAULT_KEY = "123"  # default key for Freeway
+# Mistral (cloud, OpenAI-compatible)
 MISTRAL_BASE_URL = "https://api.mistral.ai/v1"
 
-OMNIROUTE_MODELS = []   # заполнится «подкачкой моделей» (C3)
-FREEWAY_MODELS = []     # заполнится «подкачкой моделей» (C3)
+OMNIROUTE_MODELS = []   # will be filled by the model pull (C3)
+FREEWAY_MODELS = []     # will be filled by the model pull (C3)
 MISTRAL_MODELS = [
     "mistral-large-latest",
     "mistral-small-latest",

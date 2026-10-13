@@ -13,7 +13,7 @@ warnings.filterwarnings("ignore", category=FutureWarning, module="google.generat
 # Disable Gradio telemetry (local tool, no network needed at startup).
 os.environ["GRADIO_ANALYTICS_ENABLED"] = "False"
 
-# Проверяем наличие необходимых библиотек AI
+# Check that the required AI libraries are installed
 try:
     import google.generativeai as genai
     from utils import GEMINI_READY
@@ -34,7 +34,7 @@ from config import PORT, DEFAULT_OUTPUT_DIR
 # Allow overriding the Gradio port via environment variable (defaults to config.PORT)
 PORT = int(os.getenv("GRADIO_SERVER_PORT", str(PORT)))
 
-# Настройка логирования для main.py
+# Configure logging for main.py
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -146,7 +146,7 @@ def _register_pids():
 
 
 def main():
-    # Убедимся, что папка Outputs существует
+    # Make sure the Outputs folder exists
     os.makedirs(DEFAULT_OUTPUT_DIR, exist_ok=True)
     logging.info(f"Output folder '{DEFAULT_OUTPUT_DIR}' is ready.")
     _register_pids()

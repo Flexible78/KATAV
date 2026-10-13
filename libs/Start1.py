@@ -13,7 +13,7 @@ from google.auth.transport.requests import Request as GoogleRequest
 
 app = FastAPI()
 
-# ── Настройки ──────────────────────────────────────────────────────────────────
+# ── Settings ──────────────────────────────────────────────────────────────────
 GEMINI_DIR = os.path.expanduser("~/.gemini")          
 TOKEN_FILE_PATH = os.path.join(GEMINI_DIR, "oauth_creds.json")
 GEMINI_CLI_VERSION = "0.40.0"                          
@@ -285,12 +285,12 @@ async def gemini_post(token: str, project_id: str, gemini_model: str, payload: d
             return chunks
     raise Exception("Превышено число попыток после 429")
 
-# ── Генератор стриминга для VS Code ───────────────────────────────────────────
+# ── Streaming generator for VS Code ───────────────────────────────────────────
 async def gemini_stream_to_anthropic(token: str, project_id: str, gemini_model: str, payload: dict, requested_model: str):
     """Преобразует потоковый ответ от Gemini в формат Anthropic (посимвольно)."""
     msg_id = f"msg_{uuid.uuid4().hex[:16]}"
     
-    # 1. Отправляем стартовый блок с обязательными input_tokens
+    # 1. Send the start block with the required input_tokens
     msg_start = {
         "type": "message_start",
         "message": {
@@ -298,7 +298,7 @@ async def gemini_stream_to_anthropic(token: str, project_id: str, gemini_model: 
             "type": "message",
             "role": "assistant",
             "model": requested_model,
-            "usage": {"input_tokens": 150} # <-- Вот фикс для твоей ошибки в Continue!
+            "usage": {"input_tokens": 150} # <-- Here's the fix for your error in Continue!
         }
     }
     yield f"event: message_start\ndata: {json.dumps(msg_start)}\n\n"
@@ -315,7 +315,7 @@ async def gemini_stream_to_anthropic(token: str, project_id: str, gemini_model: 
     url = f"{CODE_ASSIST_BASE}:streamGenerateContent?alt=sse"
     output_tokens = 0
     
-    # 2. Читаем поток из Google и отдаем в VS Code
+    # 2. Read the stream from Google and feed it to VS Code
     async with httpx.AsyncClient() as client:
         try:
             async with client.stream("POST", url, headers=headers, json=payload, timeout=120.0) as response:
@@ -344,7 +344,7 @@ async def gemini_stream_to_anthropic(token: str, project_id: str, gemini_model: 
         except Exception as e:
             log.error(f"Сбой стрима: {e}")
 
-    # 3. Закрываем поток
+    # 3. Close the stream
     yield f"event: content_block_stop\ndata: {json.dumps({'type': 'content_block_stop', 'index': 0})}\n\n"
     msg_delta = {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": output_tokens if output_tokens > 0 else 50}}
     yield f"event: message_delta\ndata: {json.dumps(msg_delta)}\n\n"
@@ -367,7 +367,7 @@ async def handle_claude_request(request: Request):
     data = await request.json()
     messages = data.get("messages", [])
     tools = data.get("tools", [])
-    stream = data.get("stream", False) # Читаем, хочет ли VS Code стриминг
+    stream = data.get("stream", False) # Check whether VS Code wants streaming
 
     system = data.get("system", "")
     if isinstance(system, list): system = " ".join(b.get("text", "") for b in system if b.get("type") == "text")
@@ -396,7 +396,7 @@ async def handle_claude_request(request: Request):
     if tools:
         payload["request"]["tools"] = [{"functionDeclarations": anthropic_tools_to_gemini(tools)}]
 
-    # Если VS Code просит стриминг — отдаем генератор букв
+    # If VS Code asks for streaming — hand it the letter generator
     if stream:
         log.info("📡 Включен режим реального времени (Streaming)")
         return StreamingResponse(
@@ -404,7 +404,7 @@ async def handle_claude_request(request: Request):
             media_type="text/event-stream"
         )
 
-    # Обычный режим (для Whisper)
+    # Normal mode (for Whisper)
     log.info(f"[PROXY] Обычный запрос | Модель: {gemini_model} | Текст: {str(messages[-1].get('content', ''))[:80]}...")
     last_msg_key = json.dumps(messages[-1] if messages else {}, ensure_ascii=False, sort_keys=True)
     dedup_key = f"{gemini_model}:{last_msg_key}"
@@ -417,7 +417,7 @@ async def handle_claude_request(request: Request):
         del result_cache[dedup_key]
 
     try:
-        # fail_fast=True: при 429 сразу возвращаем ошибку, не ждём 5 минут
+        # fail_fast=True: on 429 return an error right away, don't wait 5 minutes
         chunks = await gemini_post(token, project_id, gemini_model, payload, fail_fast=True)
         result = gemini_response_to_anthropic(chunks)
         for tool_id, sig in result.get("_thought_signatures", {}).items(): thought_sig_store[tool_id] = sig
@@ -437,7 +437,7 @@ async def handle_claude_request(request: Request):
         "content": result["content"],
         "stop_reason": result["stop_reason"],
         "stop_sequence": None,
-        "usage": {"input_tokens": 150, "output_tokens": 150} # Фикс для Continue в обычном режиме
+        "usage": {"input_tokens": 150, "output_tokens": 150} # Fix for Continue in normal mode
     }
     result_cache[dedup_key] = (response_body, asyncio.get_event_loop().time())
     return response_body

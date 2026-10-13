@@ -6,13 +6,13 @@ import glob
 import time
 from typing import List, Dict, Any, Tuple
 
-import gradio as gr # Импорт Gradio здесь только для gr.update, пересмотреть, если srt_processor будет без Gradio
+import gradio as gr # Gradio is imported here only for gr.update; revisit if srt_processor drops Gradio
 
 from utils import log_to_terminal, sanitize_srt_text, interruptible_sleep, log_queue, clean_srt_text
 from config import DEFAULT_OUTPUT_DIR
 
 # ==============================================================================
-# 9. СИСТЕМНЫЕ УТИЛИТЫ И АВТО-ОЧИСТИТЕЛЬ (SANITIZER) (часть функций)
+# 9. SYSTEM UTILITIES AND AUTO-CLEANER (SANITIZER) (some functions)
 # ==============================================================================
 def chunk_text(text: str, chunk_size: int, by_paragraphs: bool = False,
                max_chars: int = 0) -> List[List[str]]:
@@ -46,7 +46,7 @@ def chunk_text(text: str, chunk_size: int, by_paragraphs: bool = False,
 
 
 # ==============================================================================
-# 11. БРОНЕБОЙНЫЙ ПАРСЕР И ЭКСТРАКТОР (JSON + CSV EXPORT)
+# 11. BULLETPROOF PARSER AND EXTRACTOR (JSON + CSV EXPORT)
 # ==============================================================================
 def validate_srt_translation(original: str, translated: str) -> str:
     """Require complete cues with unchanged IDs and timestamps before saving."""
@@ -113,9 +113,9 @@ def robust_parse_srt(content: str, lang_key: str, dict_data: dict, is_srt: bool 
             dict_data[clean_idx][lang_key] = text
 
 def export_to_json_dict(srt_local_path: str, custom_srt_files: List[Any], plain_text: str, hidden_actual_out_dir: str, hidden_srt_paths: str) -> Tuple[str, List[str]]:
-    global log_queue # Используем глобальную очередь логов из utils
+    global log_queue # Use the global log queue from utils
     
-    # Глобальные переменные прогресса из utils (если они еще не глобальные здесь)
+    # Global progress variables from utils (if they aren't global here yet)
     from utils import current_percent, time_elapsed, time_remaining, audio_speed, current_action, stop_requested
     global current_percent, time_elapsed, time_remaining, audio_speed, current_action, stop_requested
 
@@ -217,7 +217,7 @@ def export_to_json_dict(srt_local_path: str, custom_srt_files: List[Any], plain_
                         
                     all_clean_editor_text += f"\n--- {fname} ({lang_key}) ---\n{clean_text}\n"
 
-                    # 2) ПАРСИНГ ДЛЯ СЛОВАРЯ (С ТАЙМКОДАМИ ДЛЯ СШИВКИ)
+                    # 2) PARSING FOR THE DICTIONARY (WITH TIMECODES FOR STITCHING)
                     is_srt = fname.lower().endswith('.srt')
                     robust_parse_srt(content, lang_key, dict_data, is_srt=is_srt)
                     langs_found.add(lang_key)
@@ -232,13 +232,13 @@ def export_to_json_dict(srt_local_path: str, custom_srt_files: List[Any], plain_
                     
             sorted_list = sorted(dict_data.values(), key=safe_sort_key)
             
-            # --- ВЫРЕЗАЕМ МУСОР (УДАЛЯЕМ ID И TIME ИЗ ФИНАЛЬНЫХ ФАЙЛОВ) ---
+            # --- STRIP THE JUNK (REMOVE ID AND TIME FROM FINAL FILES) ---
             clean_export_list = [{k: v for k, v in item.items() if k not in ["id", "time"]} for item in sorted_list]
 
             target_dir = list(scan_dirs)[0] if scan_dirs else DEFAULT_OUTPUT_DIR
             p_tag = "_PARTIAL" if stop_requested else ""
             
-            # --- СОХРАНЕНИЕ JSON ---
+            # --- SAVE JSON ---
             json_path = os.path.join(target_dir, f"{base}_MULTILANG_DICT{p_tag}.json")
             try:
                 with open(json_path, 'w', encoding='utf-8') as f:
@@ -254,7 +254,7 @@ def export_to_json_dict(srt_local_path: str, custom_srt_files: List[Any], plain_
                     for k in item.keys():
                         lang_headers.add(k)
                 
-                # Сортируем заголовки, чтобы ORIGINAL был первым
+                # Sort the headers so ORIGINAL comes first
                 lang_list = list(lang_headers)
                 if "ORIGINAL" in lang_list:
                     lang_list.remove("ORIGINAL")
@@ -262,10 +262,10 @@ def export_to_json_dict(srt_local_path: str, custom_srt_files: List[Any], plain_
                     
                 headers = lang_list
                 
-                # Используем utf-8-sig (с BOM), чтобы Excel корректно читал кириллицу и иврит
+                # Use utf-8-sig (with BOM) so Excel reads Cyrillic and Hebrew correctly
                 with open(csv_path, 'w', encoding='utf-8-sig', newline='') as f:
                     writer = csv.DictWriter(f, fieldnames=headers, quoting=csv.QUOTE_MINIMAL)
-                    # ЗАГОЛОВКИ УБРАНЫ (ПО ЗАПРОСУ ПОЛЬЗОВАТЕЛЯ)
+                    # HEADERS REMOVED (AT THE USER'S REQUEST)
                     # writer.writeheader() 
                     writer.writerows(clean_export_list)
                 saved_jsons.append(csv_path)
@@ -293,7 +293,7 @@ def export_to_json_dict(srt_local_path: str, custom_srt_files: List[Any], plain_
             csv_path = os.path.join(target_dir, "Text_Translation_DICT.csv")
             with open(csv_path, 'w', encoding='utf-8-sig', newline='') as f:
                 writer = csv.DictWriter(f, fieldnames=["text"], quoting=csv.QUOTE_MINIMAL)
-                # ЗАГОЛОВКИ УБРАНЫ
+                # HEADERS REMOVED
                 writer.writerows(dict_data)
             saved_jsons.append(csv_path)
             

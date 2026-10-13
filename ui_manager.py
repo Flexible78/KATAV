@@ -3,14 +3,14 @@ import json
 import logging
 from typing import Dict, Any
 
-# Импортируем SETTINGS_FILE из config.py
+# Import SETTINGS_FILE from config.py
 from config import SETTINGS_FILE, TARGET_LANGUAGE_CODE_MAP, TARGET_LANGUAGES
 
 # Sources belong to the current session, not application preferences.
 TRANSIENT_SOURCE_KEYS = frozenset({"whisper_manual_path", "whisper_urls", "trans_srt_path"})
 
 # ==============================================================================
-# 5. МЕНЕДЖЕР СОСТОЯНИЙ ИНТЕРФЕЙСА (АВТОСОХРАНЕНИЕ)
+# 5. UI STATE MANAGER (AUTOSAVE)
 # ==============================================================================
 
 

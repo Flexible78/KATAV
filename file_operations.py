@@ -83,5 +83,5 @@ def delete_all(manual_path: str, use_custom: bool, custom_dir: str):
         except Exception: 
             pass
             
-    # После полного удаления отдаем пустой список и сбрасываем галочки
+    # After a full delete return an empty list and clear the checkboxes
     return gr.update(choices=[], value=[]), f"💣 Cleared files: {deleted_count}"

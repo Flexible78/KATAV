@@ -489,7 +489,7 @@ def run_transcription(
         paths = [p.strip().strip('"').strip("'") for p in manual_path.split('|') if p.strip()]
         for p in paths:
             if os.path.isdir(p):
-                # Бронебойный скан файлов вместо glob
+                # Bulletproof file scan instead of glob
                 for f in os.listdir(p):
                     if f.lower().endswith(('.mp4', '.mkv', '.avi', '.mp3', '.wav', '.m4a', '.flac', '.ogg')):
                         files_to_process.append(os.path.join(p, f))
@@ -763,7 +763,7 @@ def run_transcription(
             else:
                 if interruptible_sleep(1.0): break 
             
-            # 🚀 ИСПРАВЛЕНИЕ ДЛЯ WINDOWS: Заменили 'glob' на надежный 'os.listdir'
+            # 🚀 WINDOWS FIX: replaced 'glob' with the reliable 'os.listdir'
             current_file_downloads = []
             if os.path.exists(current_out_dir):
                 for fname in os.listdir(current_out_dir):
